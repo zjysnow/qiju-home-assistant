@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f6f2" />
+    <title>栖居 · 智能家居</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./speaker-id.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <section id="login-screen" class="login-screen" hidden>
+      <form id="login-form" class="login-card">
+        <div class="login-brand"><span class="brand-mark">⌂</span><strong>栖居 <small>HOME</small></strong></div>
+        <p class="eyebrow">家庭控制台</p>
+        <h1>登录你的家庭</h1>
+        <p class="login-description">使用管理员为你创建的个人账号登录。首次启动的管理员密码会显示在服务终端。</p>
+        <label class="form-field">登录名
+          <input id="login-username" name="username" type="text" minlength="3" maxlength="32" autocomplete="username" required />
+        </label>
+        <label class="form-field">密码
+          <input id="login-password" name="password" type="password" maxlength="128" autocomplete="current-password" required />
+        </label>
+        <label class="trusted-device-option">
+          <input id="remember-device" type="checkbox" />
+          <span>在此终端保持登录 30 天</span>
+        </label>
+        <label id="terminal-name-field" class="form-field terminal-name-field" hidden>终端名称
+          <input id="terminal-name" type="text" maxlength="48" autocomplete="off" />
+        </label>
+        <p id="trusted-device-hint" class="device-config-help" hidden>仅在你信任且可妥善保管的电脑或手机上启用；管理员可在账户设置中查看并撤销关联。</p>
+        <p id="login-error" class="device-form-error" role="alert"></p>
+        <button class="login-submit" type="submit">登录</button>
+      </form>
+    </section>
+    <div id="app-shell" class="app-shell" hidden>
+      <aside class="sidebar" aria-label="主导航">
+        <a class="brand" href="#" aria-label="栖居首页">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32"><path d="M4 15.2 16 5l12 10.2v12.3a1.5 1.5 0 0 1-1.5 1.5h-21A1.5 1.5 0 0 1 4 27.5V15.2Z"/><path d="M12 29V18h8v11"/></svg>
+          </span>
+          <span class="brand-name">栖居<span>HOME</span></span>
+        </a>
+
+        <div class="nav-label">空间管理</div>
+        <nav class="nav-links">
+          <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span> 总览</a>
+          <a class="nav-link" href="#devices"><span class="nav-icon">⌘</span> 设备</a>
+          <a class="nav-link" href="#scenes"><span class="nav-icon">✳</span> 场景</a>
+          <a class="nav-link" href="#energy"><span class="nav-icon">⌁</span> 能源</a>
+          <a class="nav-link" href="#members"><span class="nav-icon">♙</span> 家庭成员</a>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="help-card">
+            <div class="help-icon">✦</div>
+            <strong>让家更懂你</strong>
+            <p>试试用自然语言<br />告诉助手你想做什么。</p>
+            <button class="text-button" type="button" data-focus-assistant>开始对话 <span>→</span></button>
+          </div>
+          <button class="profile-button" type="button" aria-label="账户设置">
+            <span class="avatar">林</span>
+            <span class="profile-copy"><strong>林先生</strong><small>家庭管理员</small></span>
+            <span class="profile-more">···</span>
+          </button>
+        </div>
+      </aside>
+
+      <main id="overview" class="main-content">
+        <header class="topbar">
+          <div class="breadcrumb">我的家 <span>/</span> <strong>总览</strong></div>
+          <div class="topbar-actions">
+            <span class="connection"><i></i><span id="connection-label">连接本机服务中</span></span>
+            <span id="current-user-label" class="current-user-label"></span>
+            <button id="preferences-button" class="topbar-button" type="button">偏好</button>
+            <button id="logout-button" class="topbar-button logout-button" type="button">退出</button>
+            <span class="date-label" id="today-label"></span>
+          </div>
+        </header>
+
+        <section class="welcome-row">
+          <div>
+            <p class="eyebrow" id="greeting">周一 · 美好的一天</p>
+            <h1><span id="welcome-name">早上好，家人</span> <span class="wave">✳</span></h1>
+            <p class="welcome-subtitle">家里一切都刚刚好，来看看今天的状态吧。</p>
+          </div>
+          <div class="weather-card">
+            <div class="weather-sun" aria-hidden="true">☀</div>
+            <div><strong>26°</strong><span>晴朗 · 杭州</span></div>
+            <span class="weather-divider"></span>
+            <div class="weather-detail"><small>室外</small><b>26°</b></div>
+            <div class="weather-detail"><small>空气</small><b class="air-good">优  32</b></div>
+          </div>
+        </section>
+
+        <section class="hero-card" aria-label="家庭状态">
+          <div class="hero-copy">
+            <span class="hero-kicker"><i></i> 家的状态</span>
+            <h2>舒适，正在发生。</h2>
+            <p>室内温度 24°，空气清新。<br />有 <strong id="active-count">5</strong> 台设备正在运行。</p>
+            <button class="hero-button" type="button" data-scroll-devices>查看设备 <span>↗</span></button>
+          </div>
+          <div class="hero-house-art" aria-hidden="true">
+            <div class="orb orb-one"></div><div class="orb orb-two"></div>
+            <svg viewBox="0 0 380 250" class="house-illustration">
+              <path class="house-shadow" d="m52 126 137-88 140 88v91H52z"/>
+              <path class="house-roof" d="m37 128 152-98 155 98-15 18-140-88-138 88z"/>
+              <path class="house-wall" d="m62 135 127-80 130 80v87H62z"/>
+              <path class="house-side" d="m189 55 130 80v87H189z"/>
+              <path class="house-window" d="M88 151h55v44H88zM236 151h55v44h-55z"/>
+              <path class="house-door" d="M162 152h52v70h-52z"/>
+              <path class="house-light" d="M105 162h22v24h-22zM253 162h22v24h-22z"/>
+              <path class="house-ground" d="M28 222h326"/>
+              <circle class="house-star" cx="91" cy="57" r="3"/><circle class="house-star" cx="299" cy="49" r="4"/>
+              <path class="house-plant" d="M328 220v-43m0 18-13-14m13 7 13-15m-13 28-10-10m10 0 11-12"/>
+            </svg>
+            <div class="hero-weather-chip"><span>☼</span> 空气质量 <b>优</b></div>
+          </div>
+          <div class="hero-pagination"><i class="selected"></i><i></i><i></i></div>
+        </section>
+
+        <section class="overview-grid" aria-label="家庭概况">
+          <article class="stat-card">
+            <div class="stat-top"><span>设备状态</span><span class="stat-icon mint">⌘</span></div>
+            <div class="stat-value"><strong id="device-total">09</strong><span>台设备</span></div>
+            <div class="stat-foot"><span class="status-dot"></span><span id="online-summary">5 台运行中</span><span class="muted">· 全部在线</span></div>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span>今日用电</span><span class="stat-icon yellow">ϟ</span></div>
+            <div class="stat-value"><strong>6.8</strong><span>kWh</span></div>
+            <div class="stat-foot"><span class="trend-down">↓ 12%</span><span class="muted">较昨日同时段</span></div>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span>室内环境</span><span class="stat-icon blue">☼</span></div>
+            <div class="stat-value"><strong>24°</strong><span>舒适</span></div>
+            <div class="stat-foot"><span class="muted">湿度 52% <b class="mini-separator">·</b> PM2.5 8</span><span class="environment-good">良好</span></div>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span>家庭安全</span><span class="stat-icon lavender">⌑</span></div>
+            <div class="stat-value"><strong class="safety-value">一切正常</strong></div>
+            <div class="stat-foot"><span class="status-dot"></span><span class="muted">门窗已关闭 · 安防已布防</span></div>
+          </article>
+        </section>
+
+        <section id="devices" class="section-block devices-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">设备一览</p><h2>掌控每个角落</h2></div>
+            <div class="device-section-actions">
+              <button class="view-all" type="button" data-show-all>所有设备 <span>→</span></button>
+              <button id="add-device" class="add-device-button" type="button">＋ 添加设备</button>
+            </div>
+          </div>
+          <div class="room-tabs" role="tablist" aria-label="按房间筛选设备">
+            <button class="room-tab active" type="button" role="tab" aria-selected="true" data-room="全部">全部 <span>09</span></button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="客厅">客厅 <span>04</span></button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="卧室">卧室 <span>02</span></button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="厨房">厨房 <span>02</span></button>
+            <button class="room-tab" type="button" role="tab" aria-selected="false" data-room="阳台">阳台 <span>01</span></button>
+          </div>
+          <div id="device-grid" class="device-grid" aria-live="polite"></div>
+        </section>
+
+        <div class="lower-grid">
+          <section id="scenes" class="section-block scenes-section">
+            <div class="section-heading compact-heading">
+              <div><p class="eyebrow">一键切换</p><h2>生活场景</h2></div>
+              <button class="more-button" type="button" aria-label="更多场景">···</button>
+            </div>
+            <div class="scene-grid">
+              <button class="scene-card scene-morning" type="button" data-scene="早安模式">
+                <span class="scene-symbol">☀</span><span class="scene-name">早安模式</span><small>窗帘缓缓打开</small>
+              </button>
+              <button class="scene-card scene-relax" type="button" data-scene="观影模式">
+                <span class="scene-symbol">◐</span><span class="scene-name">观影模式</span><small>灯光调暗 · 空调舒适</small>
+              </button>
+              <button class="scene-card scene-away" type="button" data-scene="离家模式">
+                <span class="scene-symbol">⌂</span><span class="scene-name">离家模式</span><small>关闭设备 · 开启安防</small>
+              </button>
+            </div>
+          </section>
+
+          <section id="energy" class="section-block energy-section">
+            <div class="section-heading compact-heading">
+              <div><p class="eyebrow">更节能的家</p><h2>用电趋势</h2></div>
+              <button class="period-button" type="button">本周 <span>⌄</span></button>
+            </div>
+            <div class="energy-summary"><strong>32.4 <small>kWh</small></strong><span class="trend-down">↓ 8.6%</span><small>较上周</small></div>
+            <div class="chart" aria-label="本周每日用电量柱状图">
+              <div class="chart-y"><span>8</span><span>6</span><span>4</span><span>2</span><span>0</span></div>
+              <div class="chart-bars">
+                <div class="chart-column"><i style="--bar:53%"></i><span>一</span></div>
+                <div class="chart-column"><i style="--bar:78%"></i><span>二</span></div>
+                <div class="chart-column"><i style="--bar:62%"></i><span>三</span></div>
+                <div class="chart-column"><i style="--bar:92%"></i><span>四</span></div>
+                <div class="chart-column"><i style="--bar:69%"></i><span>五</span></div>
+                <div class="chart-column today"><i style="--bar:47%"></i><span>六</span></div>
+                <div class="chart-column"><i style="--bar:38%"></i><span>日</span></div>
+              </div>
+            </div>
+            <div class="energy-note"><span class="note-sparkle">✦</span> 本周比上周节省约 <b>¥ 12.8</b></div>
+          </section>
+        </div>
+
+        <section id="members" class="section-block members-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">一起生活的人</p><h2>家庭成员</h2></div>
+            <button id="add-member" class="add-device-button" type="button">＋ 添加成员</button>
+          </div>
+          <p class="members-privacy-note">声纹为实验性功能：录入的声音特征仅保存在当前浏览器，不上传服务器；识别结果不用于登录、门锁、安防或权限授权。手机端不提供声纹录入。</p>
+          <div id="member-grid" class="member-grid" aria-live="polite"></div>
+          <div class="speaker-test-row">
+            <div><strong>声音身份测试</strong><span id="speaker-result">尚未识别。请先为成员录入 3 段声音样本。</span><small>此实验声纹测试与聊天框的“语音转文字”是两项独立功能。</small></div>
+            <button id="identify-speaker" class="speaker-test-button" type="button">识别说话人（实验）</button>
+          </div>
+        </section>
+
+        <section class="assistant-bar" aria-label="智能助手">
+          <div class="assistant-header">
+            <div class="assistant-avatar"><span>✦</span><i></i></div>
+            <div class="assistant-intro"><strong>小栖 <span>AI 助手</span></strong><small id="assistant-status">正在连接本机服务…</small></div>
+            <button id="clear-chat" class="clear-chat" type="button">清空对话</button>
+          </div>
+          <div id="chat-messages" class="chat-messages" role="log" aria-live="polite">
+            <div class="chat-message assistant-message">
+              <div class="chat-bubble"><span>小栖</span><p>你好，我可以和你聊天，也可以帮你控制家里的设备。你想从哪里开始？</p></div>
+            </div>
+          </div>
+          <form id="assistant-form" class="assistant-form">
+            <label class="sr-only" for="assistant-input">告诉小栖你想做什么</label>
+            <input id="assistant-input" type="text" maxlength="2000" placeholder="随便聊聊，或说「打开客厅的灯」" autocomplete="off" />
+            <button id="mic-button" class="mic-button" type="button" aria-label="语音转文字" title="语音转文字（浏览器识别）">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"/></svg>
+            </button>
+            <button type="submit" aria-label="发送指令">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14"/></svg>
+            </button>
+          </form>
+          <div class="assistant-suggestions"><span>你可以试试</span><button type="button" data-chat-prompt="打开客厅的灯">打开客厅的灯</button><button type="button" data-chat-prompt="开启观影模式">开启观影模式</button></div>
+          <p class="mobile-control-note">手机端用于查看状态和远程控制；家庭语音对话请在家中电脑端测试。</p>
+        </section>
+
+        <footer class="footer"><span>栖居 Home <i>·</i> 让生活自在一点</span><span id="runtime-mode">正在连接本机运行服务…</span></footer>
+      </main>
+    </div>
+    <dialog id="device-dialog" class="device-dialog">
+      <form id="device-config-form" class="device-config-form">
+        <input id="device-id" name="id" type="hidden" />
+        <div class="dialog-header">
+          <div><p class="eyebrow">设备管理</p><h2 id="device-dialog-title">添加设备</h2></div>
+          <button class="dialog-close" type="button" data-close-device-dialog aria-label="关闭">×</button>
+        </div>
+        <label class="form-field">设备名称
+          <input id="device-name" name="name" type="text" maxlength="40" placeholder="例如：书房台灯" required />
+        </label>
+        <div class="form-row">
+          <label class="form-field">所在房间
+            <input id="device-room" name="room" type="text" list="device-room-options" maxlength="20" placeholder="例如：书房" required />
+            <datalist id="device-room-options"><option value="客厅"></option><option value="卧室"></option><option value="厨房"></option><option value="阳台"></option></datalist>
+          </label>
+          <label class="form-field">设备类型
+            <select id="device-type" name="type">
+              <option value="light">灯光</option><option value="ac">空调</option><option value="curtain">窗帘</option><option value="speaker">音箱</option><option value="plug">插座/开关</option><option value="cleaner">净化设备</option>
+            </select>
+          </label>
+        </div>
+        <label class="form-field">Home Assistant 实体 ID <span class="optional-label">选填</span>
+          <input id="device-entity-id" name="haEntityId" type="text" maxlength="120" placeholder="例如：light.study_lamp" autocomplete="off" />
+        </label>
+        <p class="device-config-help">留空则作为本地模拟设备；绑定真实设备前，需先配置 Home Assistant 地址和访问令牌。</p>
+        <p id="device-form-error" class="device-form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="delete-device" class="delete-device-button" type="button" hidden>删除设备</button>
+          <button class="dialog-cancel" type="button" data-close-device-dialog>取消</button>
+          <button class="dialog-save" type="submit">保存设备</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="member-dialog" class="device-dialog">
+      <form id="member-config-form" class="device-config-form">
+        <input id="member-id" name="id" type="hidden" />
+        <div class="dialog-header">
+          <div><p class="eyebrow">成员管理</p><h2 id="member-dialog-title">添加家庭成员</h2></div>
+          <button class="dialog-close" type="button" data-close-member-dialog aria-label="关闭">×</button>
+        </div>
+        <label class="form-field">成员姓名
+          <input id="member-name" name="name" type="text" maxlength="40" placeholder="例如：林先生" required />
+        </label>
+        <label class="form-field">家庭关系
+          <input id="member-relation" name="relation" type="text" maxlength="20" placeholder="例如：本人、配偶、孩子" />
+        </label>
+        <div class="member-account-fields">
+          <label class="form-field">登录名 <span class="optional-label">选填</span>
+            <input id="member-account-username" name="accountUsername" type="text" minlength="3" maxlength="32" placeholder="为成员创建独立登录账号" autocomplete="off" />
+          </label>
+          <label class="form-field">初始/重置密码 <span class="optional-label">选填</span>
+            <input id="member-account-password" name="accountPassword" type="password" minlength="10" maxlength="128" placeholder="已有账号留空则不修改" autocomplete="new-password" />
+          </label>
+          <p class="device-config-help">创建账号时登录名和密码都必填；已有账号可留空密码以保持不变。</p>
+        </div>
+        <fieldset class="member-device-fieldset">
+          <legend>关联设备</legend>
+          <div id="member-device-list" class="member-device-list"></div>
+        </fieldset>
+        <p class="device-config-help">声纹需要在每台浏览器上单独录入。添加成员不会自动授予门锁或安防权限。</p>
+        <p id="member-form-error" class="device-form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="delete-member" class="delete-device-button" type="button" hidden>删除成员</button>
+          <button class="dialog-cancel" type="button" data-close-member-dialog>取消</button>
+          <button class="dialog-save" type="submit">保存成员</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="preferences-dialog" class="device-dialog">
+      <form id="preferences-form" class="device-config-form">
+        <div class="dialog-header">
+          <div><p class="eyebrow">个人设置</p><h2>我的设备偏好</h2></div>
+          <button class="dialog-close" type="button" data-close-preferences aria-label="关闭">×</button>
+        </div>
+        <p class="device-config-help">当前账号：<strong id="preferences-account-name"></strong>。登录不会自动改变设备；明确打开灯光或空调时会使用下列默认值。</p>
+        <label class="form-field">默认灯光亮度（1–100%）
+          <input id="preference-light-brightness" type="number" min="1" max="100" required />
+        </label>
+        <label class="form-field">默认空调温度（16–30°C）
+          <input id="preference-ac-temperature" type="number" min="16" max="30" required />
+        </label>
+        <p id="preferences-error" class="device-form-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="dialog-cancel" type="button" data-close-preferences>取消</button>
+          <button class="dialog-save" type="submit">保存偏好</button>
+        </div>
+      </form>
+      <form id="password-form" class="device-config-form password-form">
+        <h3>修改登录密码</h3>
+        <label class="form-field">当前密码
+          <input id="current-password" type="password" autocomplete="current-password" required />
+        </label>
+        <label class="form-field">新密码（至少 10 位）
+          <input id="new-password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required />
+        </label>
+        <p id="password-error" class="device-form-error" role="alert"></p>
+        <button class="dialog-save" type="submit">更新密码</button>
+      </form>
+      <section class="trusted-device-section">
+        <div class="trusted-device-heading">
+          <div><h3>已关联终端</h3><p>本机管理员可查看和撤销家庭账号的终端关联。</p></div>
+        </div>
+        <div id="trusted-device-list" class="trusted-device-list"></div>
+        <p id="trusted-device-error" class="device-form-error" role="alert"></p>
+      </section>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
