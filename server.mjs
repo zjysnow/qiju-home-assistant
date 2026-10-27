@@ -6,7 +6,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,9 @@ const dataDirectory = path.join(root, "data");
 const dataFile = path.join(dataDirectory, "devices.json");
 const memberDataFile = path.join(dataDirectory, "members.json");
 const userDataFile = path.join(dataDirectory, "users.json");
+const voiceprintDataFile = path.join(dataDirectory, "voiceprints.json");
+const chatHistoryDataFile = path.join(dataDirectory, "chat-history.json");
+const petSkinDirectory = path.join(dataDirectory, "pet-skins");
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3000);
 const appPassword = process.env.APP_PASSWORD || "";
@@ -44,6 +47,8 @@ const initialDevices = [
 const devices = initialDevices.map((device) => ({ ...device }));
 const members = [];
 const users = [];
+const voiceprints = new Map();
+const chatHistories = new Map();
 const sessions = new Map();
 const loginAttempts = new Map();
 const scryptAsync = promisify(scrypt);
@@ -51,9 +56,19 @@ const sessionCookieName = "qiju_session";
 const sessionLifetimeMs = 12 * 60 * 60 * 1000;
 const trustedDeviceLifetimeMs = 30 * 24 * 60 * 60 * 1000;
 const maxTrustedDevicesPerUser = 20;
+const maxStoredChatMessages = 200;
+const maxPetSkinBytes = 5 * 1024 * 1024;
+const petSkinFormats = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/webp", "webp"],
+  ["image/gif", "gif"],
+]);
 let pendingWrite = Promise.resolve();
 let pendingMemberWrite = Promise.resolve();
 let pendingUserWrite = Promise.resolve();
+let pendingVoiceprintWrite = Promise.resolve();
+let pendingChatHistoryWrite = Promise.resolve();
 
 function availableRooms() {
   return [...new Set([...rooms, ...devices.map((device) => device.room)])];
@@ -230,6 +245,100 @@ function persistMembers() {
   return task;
 }
 
+function validateVoiceVector(input) {
+  if (!Array.isArray(input) || input.length !== 22
+      || input.some((value) => typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > 1.05)) {
+    throw validationError("声纹特征格式无效。");
+  }
+  const norm = Math.sqrt(input.reduce((sum, value) => sum + value ** 2, 0));
+  if (Math.abs(norm - 1) > 0.02) throw validationError("声纹特征未正确归一化。");
+  return [...input];
+}
+
+function validateVoiceprintProfile(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)
+      || !Array.isArray(input.vectors) || input.vectors.length < 1 || input.vectors.length > 3) {
+    throw validationError("声纹档案需包含 1 到 3 个有效样本。");
+  }
+  return { vectors: input.vectors.map(validateVoiceVector) };
+}
+
+async function loadVoiceprints() {
+  try {
+    const storedProfiles = JSON.parse(await readFile(voiceprintDataFile, "utf8"));
+    if (!storedProfiles || typeof storedProfiles !== "object" || Array.isArray(storedProfiles)) {
+      throw new Error("data/voiceprints.json 必须是家庭成员到声纹档案的映射。");
+    }
+    for (const [memberId, profile] of Object.entries(storedProfiles)) {
+      if (!members.some((member) => member.id === memberId)) {
+        throw new Error(`data/voiceprints.json 中的家庭成员不存在：${memberId}`);
+      }
+      voiceprints.set(memberId, validateVoiceprintProfile(profile));
+    }
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw new Error(`读取家庭声纹配置失败：${error.message}`);
+  }
+}
+
+function persistVoiceprints() {
+  const snapshot = JSON.stringify(Object.fromEntries(voiceprints), null, 2);
+  const task = pendingVoiceprintWrite.then(async () => {
+    await mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${voiceprintDataFile}.${randomUUID()}.tmp`;
+    await writeFile(temporaryFile, snapshot, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryFile, voiceprintDataFile);
+  });
+  pendingVoiceprintWrite = task.catch(() => {});
+  return task;
+}
+
+function validateChatMessage(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)
+      || !["user", "assistant"].includes(input.role)
+      || typeof input.content !== "string" || !input.content.trim()
+      || input.content.length > (input.role === "user" ? 2000 : 5000)) {
+    throw validationError("聊天记录中的消息格式无效。");
+  }
+  return { role: input.role, content: input.content };
+}
+
+async function loadChatHistories() {
+  try {
+    const storedHistories = JSON.parse(await readFile(chatHistoryDataFile, "utf8"));
+    if (!storedHistories || typeof storedHistories !== "object" || Array.isArray(storedHistories)) {
+      throw new Error("data/chat-history.json 必须是账号到聊天记录的映射。");
+    }
+    let removedUnknownAccounts = false;
+    for (const [userId, messages] of Object.entries(storedHistories)) {
+      if (!users.some((user) => user.id === userId)) {
+        removedUnknownAccounts = true;
+        continue;
+      }
+      if (!Array.isArray(messages)) throw new Error(`账号 ${userId} 的聊天记录格式无效。`);
+      const validated = messages.slice(-maxStoredChatMessages).map(validateChatMessage);
+      if (validated.length !== messages.length) removedUnknownAccounts = true;
+      chatHistories.set(userId, validated);
+    }
+    if (removedUnknownAccounts) await persistChatHistories();
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw new Error(`读取聊天记录失败：${error.message}`);
+  }
+}
+
+function persistChatHistories() {
+  const snapshot = JSON.stringify(Object.fromEntries(chatHistories), null, 2);
+  const task = pendingChatHistoryWrite.then(async () => {
+    await mkdir(dataDirectory, { recursive: true });
+    const temporaryFile = `${chatHistoryDataFile}.${randomUUID()}.tmp`;
+    await writeFile(temporaryFile, snapshot, { encoding: "utf8", mode: 0o600 });
+    await rename(temporaryFile, chatHistoryDataFile);
+  });
+  pendingChatHistoryWrite = task.catch(() => {});
+  return task;
+}
+
 function defaultPreferences() {
   return { lightBrightness: 70, acTemperature: 24 };
 }
@@ -396,6 +505,7 @@ function publicMember(member, user) {
 
 await loadDeviceStore();
 await loadMemberStore();
+await loadVoiceprints();
 await loadUserStore();
 if (!users.some((user) => user.role === "admin")) {
   if (!["127.0.0.1", "::1", "localhost"].includes(host) && !configuredAdminPassword) {
@@ -430,6 +540,7 @@ if (!users.some((user) => user.role === "admin")) {
     console.log("请妥善保存该密码；后续可在账户设置中修改。");
   }
 }
+await loadChatHistories();
 let expiredTrustedDevices = false;
 for (const user of users) {
   const activeDevices = user.trustedDevices.filter((device) => device.expiresAt > Date.now());
@@ -541,6 +652,86 @@ async function readJson(request) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+async function readPetSkinUpload(request) {
+  const contentType = String(request.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
+  const extension = petSkinFormats.get(contentType);
+  if (!extension) throw validationError("仅支持 PNG、JPEG、WebP 或 GIF 皮肤图片。");
+  const contentLength = Number(request.headers["content-length"] || 0);
+  if (contentLength > maxPetSkinBytes) throw validationError("皮肤图片不能超过 5 MB。", 413);
+
+  const chunks = [];
+  let totalLength = 0;
+  for await (const chunk of request) {
+    totalLength += chunk.length;
+    if (totalLength > maxPetSkinBytes) throw validationError("皮肤图片不能超过 5 MB。", 413);
+    chunks.push(chunk);
+  }
+  const data = Buffer.concat(chunks);
+  const hasValidSignature = contentType === "image/png"
+    ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : contentType === "image/jpeg"
+      ? data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff
+      : contentType === "image/webp"
+        ? data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP"
+        : data.toString("ascii", 0, 6) === "GIF87a" || data.toString("ascii", 0, 6) === "GIF89a";
+  if (!data.length || !hasValidSignature) throw validationError("图片内容与所选格式不匹配。");
+  return { data, extension, contentType };
+}
+
+function petSkinPath(userId, extension) {
+  return path.join(petSkinDirectory, `${userId}.${extension}`);
+}
+
+async function findPetSkin(userId) {
+  const matches = [];
+  for (const [contentType, extension] of petSkinFormats) {
+    const filePath = petSkinPath(userId, extension);
+    try {
+      const metadata = await stat(filePath);
+      if (metadata.isFile()) {
+        matches.push({ contentType, filePath, modifiedAt: metadata.mtimeMs, size: metadata.size });
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  matches.sort((first, second) => second.modifiedAt - first.modifiedAt);
+  return matches[0] || null;
+}
+
+async function removePetSkins(userId, exceptExtension = "") {
+  const warnings = [];
+  for (const extension of petSkinFormats.values()) {
+    if (extension === exceptExtension) continue;
+    try {
+      await unlink(petSkinPath(userId, extension));
+    } catch (error) {
+      if (error.code !== "ENOENT") warnings.push(error.message);
+    }
+  }
+  return warnings;
+}
+
+async function savePetSkin(userId, image) {
+  await mkdir(petSkinDirectory, { recursive: true, mode: 0o700 });
+  const target = petSkinPath(userId, image.extension);
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, image.data, { mode: 0o600, flag: "wx" });
+    await rename(temporary, target);
+  } catch (error) {
+    try {
+      await unlink(temporary);
+    } catch (cleanupError) {
+      if (cleanupError.code !== "ENOENT") {
+        throw new AggregateError([error, cleanupError], `保存皮肤失败，临时文件清理也失败：${error.message}`);
+      }
+    }
+    throw error;
+  }
+  return removePetSkins(userId, image.extension);
 }
 
 async function haRequest(apiPath, options = {}) {
@@ -841,7 +1032,10 @@ const staticFiles = new Map([
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
+  ["/pet-renderer.js", ["pet-renderer.js", "text/javascript; charset=utf-8"]],
   ["/speaker-id.js", ["speaker-id.js", "text/javascript; charset=utf-8"]],
+  ["/manifest.webmanifest", ["manifest.webmanifest", "application/manifest+json; charset=utf-8"]],
+  ["/icon.svg", ["icon.svg", "image/svg+xml"]],
 ]);
 
 async function serveStaticFile(requestUrl, response) {
@@ -859,6 +1053,18 @@ async function serveStaticFile(requestUrl, response) {
 
 function requireAdmin(user) {
   if (user.role !== "admin") throw validationError("此操作仅限家庭管理员。", 403);
+}
+
+function requireVoiceprintAccess(user, memberId) {
+  if (user.role !== "admin" && user.memberId !== memberId) {
+    throw validationError("只能管理自己的声纹档案。", 403);
+  }
+}
+
+function publicVoiceprintCounts(user) {
+  return Object.fromEntries(members
+    .filter((member) => user.role === "admin" || member.id === user.memberId)
+    .map((member) => [member.id, voiceprints.get(member.id)?.vectors.length || 0]));
 }
 
 const server = createServer(async (request, response) => {
@@ -970,6 +1176,179 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if ((request.method === "GET" || request.method === "HEAD")
+        && requestUrl.pathname === "/api/assistant/skin") {
+      const skin = await findPetSkin(currentUser.id);
+      if (!skin) {
+        response.writeHead(404, {
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+        });
+        response.end();
+        return;
+      }
+      const data = request.method === "GET" ? await readFile(skin.filePath) : null;
+      response.writeHead(200, {
+        "content-type": skin.contentType,
+        "content-length": skin.size,
+        "cache-control": "private, no-store",
+        "content-disposition": `inline; filename="qiju-pet.${path.extname(skin.filePath).slice(1)}"`,
+        "x-content-type-options": "nosniff",
+      });
+      if (data) response.end(data);
+      else response.end();
+      return;
+    }
+    if (request.method === "PUT" && requestUrl.pathname === "/api/assistant/skin") {
+      const image = await readPetSkinUpload(request);
+      const warnings = await savePetSkin(currentUser.id, image);
+      sendJson(response, 200, { ok: true, warnings });
+      return;
+    }
+    if (request.method === "DELETE" && requestUrl.pathname === "/api/assistant/skin") {
+      const warnings = await removePetSkins(currentUser.id);
+      sendJson(response, 200, { ok: true, warnings });
+      return;
+    }
+
+    if (request.method === "GET" && requestUrl.pathname === "/api/chat/history") {
+      sendJson(response, 200, { messages: chatHistories.get(currentUser.id) || [] });
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/api/chat/history") {
+      const body = await readJson(request);
+      if (!Array.isArray(body.messages) || body.messages.length < 1 || body.messages.length > 2) {
+        throw validationError("每次只能保存 1 到 2 条聊天消息。");
+      }
+      const appendedMessages = body.messages.map(validateChatMessage);
+      const previous = chatHistories.get(currentUser.id);
+      chatHistories.set(
+        currentUser.id,
+        [...(previous || []), ...appendedMessages].slice(-maxStoredChatMessages),
+      );
+      try {
+        await persistChatHistories();
+      } catch (error) {
+        if (previous) chatHistories.set(currentUser.id, previous);
+        else chatHistories.delete(currentUser.id);
+        throw error;
+      }
+      sendJson(response, 200, { count: chatHistories.get(currentUser.id).length });
+      return;
+    }
+    if (request.method === "DELETE" && requestUrl.pathname === "/api/chat/history") {
+      const previous = chatHistories.get(currentUser.id);
+      chatHistories.delete(currentUser.id);
+      try {
+        await persistChatHistories();
+      } catch (error) {
+        if (previous) chatHistories.set(currentUser.id, previous);
+        throw error;
+      }
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (request.method === "GET" && requestUrl.pathname === "/api/voiceprints") {
+      sendJson(response, 200, { counts: publicVoiceprintCounts(currentUser) });
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/api/voiceprints/identify") {
+      const sample = validateVoiceVector((await readJson(request)).vector);
+      const scored = members.filter((member) => currentUser.role === "admin" || member.id === currentUser.memberId)
+        .flatMap((member) => {
+        const vectors = voiceprints.get(member.id)?.vectors;
+        if (!vectors || vectors.length < 3) return [];
+        const similarities = vectors.map((vector) => vector.reduce((sum, value, index) => sum + value * sample[index], 0))
+          .sort((first, second) => second - first);
+        return [{ memberId: member.id, score: (similarities[0] + similarities[1]) / 2 }];
+        }).sort((first, second) => second.score - first.score);
+      const best = scored[0];
+      const margin = best ? best.score - (scored[1]?.score ?? 0) : 0;
+      sendJson(response, 200, {
+        memberId: best && best.score >= 0.84 && margin >= 0.04 ? best.memberId : null,
+        score: best?.score ?? 0,
+      });
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/api/voiceprints/import") {
+      const body = await readJson(request);
+      if (!body.profiles || typeof body.profiles !== "object" || Array.isArray(body.profiles)
+          || Object.keys(body.profiles).length > 50) {
+        throw validationError("待迁移声纹档案格式无效。");
+      }
+      const imported = [];
+      const skipped = [];
+      for (const [memberId, profile] of Object.entries(body.profiles)) {
+        if (!members.some((member) => member.id === memberId)) {
+          throw validationError(`找不到要迁移声纹的家庭成员：${memberId}`, 404);
+        }
+        requireVoiceprintAccess(currentUser, memberId);
+        const validatedProfile = validateVoiceprintProfile(profile);
+        if (voiceprints.has(memberId)) {
+          skipped.push(memberId);
+        } else {
+          imported.push([memberId, validatedProfile]);
+        }
+      }
+      for (const [memberId, profile] of imported) voiceprints.set(memberId, profile);
+      if (imported.length) {
+        try {
+          await persistVoiceprints();
+        } catch (error) {
+          for (const [memberId] of imported) voiceprints.delete(memberId);
+          throw error;
+        }
+      }
+      sendJson(response, 200, {
+        imported: imported.map(([memberId]) => memberId),
+        skipped,
+        counts: publicVoiceprintCounts(currentUser),
+      });
+      return;
+    }
+    const voiceprintMatch = requestUrl.pathname.match(/^\/api\/voiceprints\/([a-z0-9-]+)$/);
+    if (voiceprintMatch) {
+      const memberId = voiceprintMatch[1];
+      if (!members.some((member) => member.id === memberId)) {
+        sendJson(response, 404, { error: "找不到这位家庭成员。" });
+        return;
+      }
+      requireVoiceprintAccess(currentUser, memberId);
+      if (request.method === "PUT") {
+        const body = await readJson(request);
+        if (!Array.isArray(body.vectors) || body.vectors.length !== 3) {
+          throw validationError("完整声纹档案必须包含 3 个样本。");
+        }
+        const previous = voiceprints.get(memberId);
+        voiceprints.set(memberId, { vectors: body.vectors.map(validateVoiceVector) });
+        try {
+          await persistVoiceprints();
+        } catch (error) {
+          if (previous) voiceprints.set(memberId, previous);
+          else voiceprints.delete(memberId);
+          throw error;
+        }
+        sendJson(response, 200, { count: 3 });
+        return;
+      }
+      if (request.method === "DELETE") {
+        const previous = voiceprints.get(memberId);
+        if (!previous) {
+          sendJson(response, 404, { error: "该成员尚未录入声纹样本。" });
+          return;
+        }
+        voiceprints.delete(memberId);
+        try {
+          await persistVoiceprints();
+        } catch (error) {
+          voiceprints.set(memberId, previous);
+          throw error;
+        }
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+    }
     if (request.method === "GET" && requestUrl.pathname === "/api/preferences") {
       sendJson(response, 200, { preferences: currentUser.preferences });
       return;
@@ -1122,23 +1501,47 @@ const server = createServer(async (request, response) => {
         return;
       }
       const [member] = members.splice(index, 1);
+      const removedVoiceprint = voiceprints.get(member.id);
+      voiceprints.delete(member.id);
       const linkedUsers = users.filter((user) => user.memberId === member.id);
+      const removedChatHistories = new Map();
+      for (const user of linkedUsers) {
+        if (chatHistories.has(user.id)) {
+          removedChatHistories.set(user.id, chatHistories.get(user.id));
+          chatHistories.delete(user.id);
+        }
+      }
       for (const user of linkedUsers) users.splice(users.indexOf(user), 1);
       try {
         await persistMembers();
         if (linkedUsers.length) await persistUsers();
+        if (removedVoiceprint) await persistVoiceprints();
+        if (removedChatHistories.size) await persistChatHistories();
       } catch (error) {
         members.splice(index, 0, member);
         users.push(...linkedUsers);
-        await persistMembers();
-        if (linkedUsers.length) await persistUsers();
+        if (removedVoiceprint) voiceprints.set(member.id, removedVoiceprint);
+        for (const [userId, history] of removedChatHistories) chatHistories.set(userId, history);
+        try {
+          await persistMembers();
+          if (linkedUsers.length) await persistUsers();
+          if (removedVoiceprint) await persistVoiceprints();
+          if (removedChatHistories.size) await persistChatHistories();
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], `删除成员失败且持久化回滚未完成：${error.message}`);
+        }
         throw error;
       }
       const linkedUserIds = new Set(linkedUsers.map((user) => user.id));
       for (const [tokenHash, session] of sessions) {
         if (linkedUserIds.has(session.userId)) sessions.delete(tokenHash);
       }
-      sendJson(response, 200, { members: members.map((item) => publicMember(item, currentUser)) });
+      const skinWarnings = [];
+      for (const user of linkedUsers) skinWarnings.push(...await removePetSkins(user.id));
+      sendJson(response, 200, {
+        members: members.map((item) => publicMember(item, currentUser)),
+        warnings: skinWarnings,
+      });
       return;
     }
     if (request.method === "POST" && requestUrl.pathname === "/api/accounts") {

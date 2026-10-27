@@ -4,10 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#f5f6f2" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="栖居" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <title>栖居 · 智能家居</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
     <link rel="stylesheet" href="./styles.css" />
     <script src="./speaker-id.js" defer></script>
     <script src="./app.js" defer></script>
+    <script type="module" src="./pet-renderer.js"></script>
   </head>
   <body>
     <section id="login-screen" class="login-screen" hidden>
@@ -73,6 +80,9 @@
           <div class="topbar-actions">
             <span class="connection"><i></i><span id="connection-label">连接本机服务中</span></span>
             <span id="current-user-label" class="current-user-label"></span>
+            <button id="fullscreen-button" class="topbar-button fullscreen-button" type="button" aria-label="进入全屏" title="进入全屏">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></svg>
+            </button>
             <button id="preferences-button" class="topbar-button" type="button">偏好</button>
             <button id="logout-button" class="topbar-button logout-button" type="button">退出</button>
             <span class="date-label" id="today-label"></span>
@@ -207,7 +217,7 @@
             <div><p class="eyebrow">一起生活的人</p><h2>家庭成员</h2></div>
             <button id="add-member" class="add-device-button" type="button">＋ 添加成员</button>
           </div>
-          <p class="members-privacy-note">声纹为实验性功能：录入的声音特征仅保存在当前浏览器，不上传服务器；识别结果不用于登录、门锁、安防或权限授权。手机端不提供声纹录入。</p>
+          <p class="members-privacy-note">声纹为实验性功能：经本人同意后，特征向量会保存在家庭服务器，不保存或上传原始录音；聊天记录也按登录账号保存在服务器，可随时清空。识别结果不用于登录、门锁、安防或权限授权。手机端不提供声纹录入。</p>
           <div id="member-grid" class="member-grid" aria-live="polite"></div>
           <div class="speaker-test-row">
             <div><strong>声音身份测试</strong><span id="speaker-result">尚未识别。请先为成员录入 3 段声音样本。</span><small>此实验声纹测试与聊天框的“语音转文字”是两项独立功能。</small></div>
@@ -242,6 +252,135 @@
 
         <footer class="footer"><span>栖居 Home <i>·</i> 让生活自在一点</span><span id="runtime-mode">正在连接本机运行服务…</span></footer>
       </main>
+      <aside id="pet-widget" class="pet-widget" aria-label="小栖虚拟助手">
+        <section id="pet-panel" class="pet-panel" role="region" aria-labelledby="pet-title" hidden>
+          <div class="pet-panel-heading">
+            <div class="pet-panel-brand">
+              <span class="pet-online-dot"></span>
+              <div><strong id="pet-title">小栖</strong><small>你的家庭小伙伴</small></div>
+            </div>
+            <button id="pet-close" class="pet-close" type="button" aria-label="收起小栖面板">×</button>
+          </div>
+          <p id="pet-greeting" class="pet-greeting" aria-live="polite">平时我在右下角等你。静置一会儿，我会化作像素电子幽灵，在屏幕里轻轻漂浮。</p>
+          <div class="pet-projection-control">
+            <span id="pet-projection-status">静置 20 秒后，像素小栖出游</span>
+            <div>
+              <button id="pet-projection-preview" type="button">看看投影</button>
+              <button id="pet-projection-toggle" type="button" aria-pressed="true">关闭投影</button>
+            </div>
+          </div>
+          <div class="pet-actions">
+            <button type="button" data-pet-action="chat"><span aria-hidden="true">✦</span>和我聊聊</button>
+            <button type="button" data-pet-action="devices"><span aria-hidden="true">⌘</span>查看设备</button>
+            <button type="button" data-pet-action="light"><span aria-hidden="true">☼</span>打开客厅的灯</button>
+            <button type="button" data-pet-action="scene"><span aria-hidden="true">◐</span>开启观影模式</button>
+            <button type="button" data-pet-action="members"><span aria-hidden="true">♙</span>家庭成员</button>
+            <button type="button" data-pet-action="preferences"><span aria-hidden="true">⚙</span>个人偏好</button>
+            <button type="button" data-pet-action="skin"><span aria-hidden="true">✿</span>更换皮肤</button>
+          </div>
+          <div class="pet-voice-controls">
+            <button id="pet-mic-button" type="button" aria-label="用语音和小栖交流" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3m-4 0h8"/></svg>
+              用语音和我说话
+            </button>
+            <small>语音由浏览器处理；识别服务是否联网取决于浏览器。</small>
+          </div>
+          <input id="pet-skin-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+          <div class="pet-skin-controls">
+            <small>可使用你有权使用的 PNG、JPEG、WebP 或 GIF 图片。</small>
+            <button id="pet-skin-reset" type="button">恢复默认形象</button>
+          </div>
+          <small class="pet-panel-hint">快捷操作会沿用当前账号的权限与设备设置。</small>
+        </section>
+        <button id="pet-toggle" class="pet-toggle" type="button" aria-label="打开小栖快捷面板" aria-controls="pet-panel" aria-expanded="false">
+          <span class="pet-avatar">
+            <img id="pet-skin-image" class="pet-skin-image" alt="小栖的自定义皮肤" hidden />
+            <svg class="pet-character" viewBox="0 0 160 148" role="img" aria-label="小栖：戴绿领巾、头顶小叶芽的奶白色小猫">
+              <ellipse class="pet-shadow" cx="81" cy="133" rx="51" ry="5" />
+              <g class="pet-cat">
+                <path class="pet-tail pet-fur" d="M118 114c26 5 30-12 22-18-6-4-12 1-8 6 4 6-5 8-13 4" />
+                <path class="pet-fur" d="M47 86c-8 12-11 28-5 39 13 9 62 9 76 0 6-12 1-29-7-39Z" />
+                <g class="pet-foot pet-foot-left"><ellipse class="pet-fur" cx="53" cy="126" rx="15" ry="7" /></g>
+                <g class="pet-foot pet-foot-right"><ellipse class="pet-fur" cx="106" cy="126" rx="15" ry="7" /></g>
+                <g class="pet-head-rig">
+                  <path class="pet-fur" d="M31 61c-3-15-2-35 3-38 4-2 18 9 24 14 14-5 29-5 43 0 7-6 20-16 24-13 5 4 5 24 2 38 7 8 8 18 4 26-9 17-92 18-103 0-5-9-4-18 3-27Z" />
+                  <path class="pet-inner-ear" d="m38 34 13 10-14 6Zm81 0-13 10 15 6Z" />
+                  <path class="pet-forehead" d="m71 42 3 6m6-7 1 6m6-5-1 6" />
+                  <g class="pet-sprout">
+                    <path d="M80 34q-3-12 3-17" />
+                    <path class="pet-leaf" d="M82 24c-12 0-17-7-15-13 10-1 17 4 15 13Zm0-3c-1-10 6-16 15-14 0 9-5 15-15 14Z" />
+                  </g>
+                  <ellipse class="pet-blush" cx="46" cy="79" rx="9" ry="5" />
+                  <ellipse class="pet-blush" cx="114" cy="79" rx="9" ry="5" />
+                  <g class="pet-eyes">
+                    <g class="pet-blink">
+                      <ellipse class="pet-pupil" cx="58" cy="68" rx="3.6" ry="5" />
+                      <ellipse class="pet-pupil" cx="102" cy="68" rx="3.6" ry="5" />
+                      <circle class="pet-eye-shine" cx="59" cy="66" r="1.2" />
+                      <circle class="pet-eye-shine" cx="103" cy="66" r="1.2" />
+                    </g>
+                  </g>
+                  <path class="pet-happy-eyes" d="M53 69q5-7 10 0m34 0q5-7 10 0" />
+                  <path class="pet-nose" d="M77 75q3-2 6 0l-3 3Z" />
+                  <path class="pet-mouth" d="M80 78v2m-8 0q4 7 8 0 4 7 8 0" />
+                  <ellipse class="pet-mouth-open" cx="80" cy="83" rx="4" ry="5" />
+                  <path class="pet-whiskers" d="m31 73-9-2m10 9-10 1m107-8 9-2m-10 9 10 1" />
+                </g>
+                <path class="pet-bandana" d="M48 97q32 10 64 0l-15 18-17-9-15 9Z" />
+                <path class="pet-pendant" d="m76 106 4-3 4 3v6h-8Z" />
+                <g class="pet-keyboard">
+                  <path d="m43 119-9 12q-1 4 4 4h84q5 0 3-4l-9-12Z" />
+                  <path class="pet-keys" d="M46 124h67m-71 5h76m-64-5-2 5m15-5-1 5m15-5v5m14-5 1 5m12-5 2 5m-45 3h31" />
+                </g>
+                <g class="pet-paw pet-paw-left">
+                  <path class="pet-fur" d="M43 102c-8 0-13 11-8 17 4 5 18 3 21-2 3-6-4-15-13-15Z" />
+                  <path class="pet-toes" d="m40 116 1 3m5-3 1 3" />
+                </g>
+                <g class="pet-paw pet-paw-right">
+                  <path class="pet-fur" d="M117 102c8 0 13 11 8 17-4 5-18 3-21-2-3-6 4-15 13-15Z" />
+                  <path class="pet-toes" d="m114 116-1 3m7-3-1 3" />
+                </g>
+              </g>
+              <g class="pet-listen-marks"><path d="M17 49q-7 8 0 16m-7-22q-12 14 0 28" /></g>
+              <g class="pet-thought-dots"><circle cx="127" cy="25" r="2" /><circle cx="136" cy="19" r="2.5" /><circle cx="146" cy="17" r="3" /></g>
+              <path class="pet-heart" d="M132 45c-10-6-12-12-8-15 4-3 8 0 8 3 1-4 6-6 9-2 4 5-3 11-9 14Z" />
+            </svg>
+          </span>
+          <span class="pet-name-badge"><i></i> 小栖 <span id="pet-state-label" aria-hidden="true">陪伴中</span></span>
+        </button>
+        <span class="pet-transfer-pixels" aria-hidden="true"></span>
+      </aside>
+      <div id="pet-ghost" class="pet-ghost" aria-hidden="true" hidden>
+        <span class="pet-transfer-pixels"></span>
+        <div class="pet-ghost-visual">
+        <svg class="pet-pixel-art" viewBox="0 0 40 48" shape-rendering="crispEdges">
+          <g class="pet-pixel-sparks" fill="#9adac6">
+            <path d="M3 14h2v2H3zm31-7h2v2h-2zM5 33h2v2H5zm29-7h2v2h-2z" />
+            <path opacity=".45" d="M1 22h2v2H1zm35-4h2v2h-2zM8 41h2v2H8zm22-3h2v2h-2z" />
+          </g>
+          <g class="pet-pixel-spirit">
+            <path fill="#527e75" d="M10 8h4v3h12V8h4v4h2v4h2v13h-4v4h-3v5h-3v3h-3v-3h-3v4h-3v-4h-3v-6H8v-4H6V16h2v-4h2Z" />
+            <path fill="#d8fff1" d="M11 11h2v3h14v-3h2v5h3v11h-4v4H12v-2H8V17h3Z" />
+            <path fill="#97d7c2" d="M10 18h3v-4h4v2h-2v5h-5Zm13-4h4v3h3v5h-4v-4h-3Z" />
+            <path fill="#f3fff2" d="M14 18h12v10H13v-7h1Z" />
+            <path fill="#386e69" d="M15 22h2v3h-2zm8 0h2v3h-2zm-5 5h4v1h-4Z" />
+            <path fill="#f1b5b3" d="M11 26h3v1h-3zm15 0h3v1h-3Z" />
+            <path fill="#a5e7d2" d="M12 30h16v3h-3v5h-3v-3h-3v4h-2v-4h-3v-3h-2Z" />
+            <path fill="#eaffef" d="M16 31h8v3h-3v2h-2v-2h-3Z" />
+            <path fill="#689b83" d="M19 11V7h-5V3h4v2h2V2h5v4h-3v5Z" />
+            <path fill="#c6f4a8" d="M15 4h3v2h-3zm6-1h3v2h-3Z" />
+            <path fill="#f4dc9e" d="M18 31h4v3h-4Z" />
+            <path fill="#c3f4df" d="M6 22h3v7H6zm25 0h3v7h-3Z" />
+            <path fill="#fff" opacity=".55" d="M10 19h20v1H10zm-1 6h22v1H9zm5 9h12v1H14Z" />
+          </g>
+          <g class="pet-pixel-signal" fill="#94cdbb">
+            <path opacity=".25" d="M9 43h22v1H9zm3 2h16v1H12Z" />
+            <path d="M16 43h3v1h-3zm5 0h3v1h-3Z" />
+          </g>
+        </svg>
+        <span class="pet-ghost-caption">小栖 · 电子幽灵</span>
+        </div>
+      </div>
     </div>
     <dialog id="device-dialog" class="device-dialog">
       <form id="device-config-form" class="device-config-form">
@@ -302,7 +441,7 @@
           <legend>关联设备</legend>
           <div id="member-device-list" class="member-device-list"></div>
         </fieldset>
-        <p class="device-config-help">声纹需要在每台浏览器上单独录入。添加成员不会自动授予门锁或安防权限。</p>
+        <p class="device-config-help">声纹录入需在有麦克风的电脑浏览器完成，样本保存在家庭服务器。添加成员不会自动授予门锁或安防权限。</p>
         <p id="member-form-error" class="device-form-error" role="alert"></p>
         <div class="dialog-actions">
           <button id="delete-member" class="delete-device-button" type="button" hidden>删除成员</button>

@@ -10,6 +10,11 @@ let devices = [
   { id: "balcony-light", name: "阳台灯", room: "阳台", type: "light", detail: "已关闭", enabled: false, value: 50 },
 ];
 const rooms = ["客厅", "卧室", "厨房", "阳台"];
+const PET_IDLE_DELAY = 20000;
+const PET_GHOST_WIDTH = 96;
+const PET_GHOST_HEIGHT = 112;
+const PET_GHOST_DRIFT_DURATION = 6500;
+const PET_PROJECTION_TRANSITION_DURATION = 640;
 
 const icons = {
   light: "☼",
@@ -38,10 +43,22 @@ let activeRoom = "全部";
 let toastTimer;
 let chatHistory = [];
 let members = [];
+let voiceprintCounts = {};
 let currentUser = null;
 let currentSpeakerId = null;
 let voiceBusy = false;
 let speakNextReply = false;
+let activeVoiceRecognition = null;
+let activeVoiceButton = null;
+let petProjectionEnabled = true;
+let petIdleTimer = null;
+let petGhostTimer = null;
+let petProjectionTimer = null;
+let petProjectionPhase = "docked";
+let petReactionTimer = null;
+let petGazeFrame = null;
+let petTypingTimer = null;
+const petMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 const voiceStorageKey = "qiju-local-voiceprints-v1";
 const enrollmentPhrase = "小栖你好，今天家里很舒服。";
 
@@ -97,6 +114,62 @@ async function refreshMembers() {
     currentSpeakerId = null;
   }
   renderMembers();
+}
+
+async function refreshVoiceprints(migrateLocal = false) {
+  const result = await requestApi("/api/voiceprints");
+  voiceprintCounts = result.counts;
+  renderMembers();
+  if (!migrateLocal) return;
+
+  let localProfiles;
+  try {
+    localProfiles = readVoiceprints();
+  } catch (error) {
+    document.querySelector("#speaker-result").textContent = error.message;
+    return;
+  }
+  const eligibleEntries = Object.entries(localProfiles).filter(([memberId, profile]) => (
+    members.some((member) => member.id === memberId)
+      && (currentUser.role === "admin" || currentUser.memberId === memberId)
+      && Array.isArray(profile?.vectors)
+  ));
+  const importEntries = eligibleEntries.filter(([memberId]) => !voiceprintCounts[memberId]);
+  const alreadyStoredEntries = eligibleEntries.filter(([memberId, profile]) => (
+    voiceprintCounts[memberId] >= profile.vectors.length
+  ));
+  if (!importEntries.length && !alreadyStoredEntries.length) return;
+  if (!window.confirm(
+    `发现 ${importEntries.length + alreadyStoredEntries.length} 份旧的浏览器声纹档案。确认将尚未保存的特征迁移到家庭服务器，并在成功后清除浏览器副本吗？不会上传原始录音。`,
+  )) return;
+
+  try {
+    let migratedIds = [];
+    if (importEntries.length) {
+      for (const [memberId, profile] of importEntries) {
+        const imported = await requestApi("/api/voiceprints/import", {
+          method: "POST",
+          body: JSON.stringify({ profiles: { [memberId]: profile } }),
+        });
+        voiceprintCounts = imported.counts;
+        migratedIds.push(...imported.imported);
+      }
+    }
+    const removableIds = new Set([
+      ...migratedIds,
+      ...alreadyStoredEntries.map(([memberId]) => memberId),
+    ]);
+    for (const memberId of removableIds) delete localProfiles[memberId];
+    if (Object.keys(localProfiles).length) writeVoiceprints(localProfiles);
+    else window.localStorage.removeItem(voiceStorageKey);
+    renderMembers();
+    if (migratedIds.length) {
+      document.querySelector("#speaker-result").textContent = "声纹特征已迁移到家庭服务器；浏览器副本已清除。";
+    }
+  } catch (error) {
+    console.error(error);
+    document.querySelector("#speaker-result").textContent = `声纹迁移失败，浏览器副本仍保留：${error.message}`;
+  }
 }
 
 function activeDeviceCount() {
@@ -168,16 +241,10 @@ function renderMembers() {
     memberGrid.innerHTML = '<div class="member-empty">还没有家庭成员，管理员可添加成员、创建登录账号并关联设备。</div>';
     return;
   }
-  let profiles;
-  try {
-    profiles = readVoiceprints();
-  } catch (error) {
-    profiles = {};
-    document.querySelector("#speaker-result").textContent = error.message;
-  }
   const deviceById = new Map(devices.map((device) => [device.id, device]));
   memberGrid.innerHTML = members.map((member) => {
-    const sampleCount = profiles[member.id]?.vectors?.length || 0;
+    const canAccessVoiceprint = currentUser?.role === "admin" || currentUser?.memberId === member.id;
+    const sampleCount = canAccessVoiceprint ? voiceprintCounts[member.id] || 0 : null;
     const associated = member.deviceIds.map((id) => deviceById.get(id)?.name).filter(Boolean);
     const tags = associated.length
       ? associated.map((name) => `<span class="member-device-tag">${escapeHtml(name)}</span>`).join("")
@@ -191,8 +258,10 @@ function renderMembers() {
         </div>
         <div class="member-device-tags">${tags}</div>
         <div class="member-card-footer">
-          <span class="voiceprint-status">${sampleCount >= 3 ? "声纹已录入" : `声音样本 ${sampleCount}/3`} · 本机保存</span>
-          <button class="voice-enroll-button" type="button" data-enroll-member="${escapeHtml(member.id)}" ${voiceBusy ? "disabled" : ""}>${sampleCount >= 3 ? "重新录入" : "录入声音"}</button>
+          <span class="voiceprint-status">${canAccessVoiceprint
+            ? `${sampleCount >= 3 ? "声纹已录入" : `声音样本 ${sampleCount}/3`} · 服务器保存`
+            : "声纹状态仅本人可见"}</span>
+          ${canAccessVoiceprint ? `<button class="voice-enroll-button" type="button" data-enroll-member="${escapeHtml(member.id)}" ${voiceBusy ? "disabled" : ""}>${sampleCount >= 3 ? "重新录入" : "录入声音"}</button>` : ""}
         </div>
       </article>`;
   }).join("");
@@ -203,6 +272,99 @@ function showToast(message) {
   toast.classList.add("visible");
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove("visible"), 2600);
+}
+
+function updateFullscreenButton() {
+  const button = document.querySelector("#fullscreen-button");
+  const isStandalone = navigator.standalone === true
+    || Boolean(window.matchMedia?.("(display-mode: standalone)")?.matches);
+  button.hidden = isStandalone;
+  const isFullscreen = Boolean(document.fullscreenElement);
+  button.setAttribute("aria-label", isFullscreen ? "退出全屏" : "进入全屏");
+  button.setAttribute("aria-pressed", String(isFullscreen));
+  button.title = isFullscreen ? "退出全屏" : "进入全屏";
+}
+
+async function toggleFullscreen() {
+  if (!document.fullscreenElement
+      && (!document.fullscreenEnabled || typeof document.documentElement.requestFullscreen !== "function")) {
+    showToast("当前浏览器不支持网页全屏。iPhone/iPad 请在 Safari 分享菜单中选择“添加到主屏幕”，再从主屏幕打开。");
+    return;
+  }
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen();
+  } catch (error) {
+    console.error(error);
+    showToast(`无法切换全屏：${error.message}`);
+  }
+}
+
+async function refreshPetSkin() {
+  const image = document.querySelector("#pet-skin-image");
+  const avatar = document.querySelector(".pet-avatar");
+  clearPetSkinDisplay();
+  try {
+    const response = await fetch("/api/assistant/skin", { method: "HEAD" });
+    if (response.status === 404) return;
+    if (!response.ok) throw new Error(`服务返回错误（${response.status}）`);
+    image.onload = () => avatar.classList.add("has-custom-skin");
+    image.onerror = () => {
+      clearPetSkinDisplay();
+      showToast("小栖皮肤图片无法显示，请重新上传 PNG、JPEG、WebP 或 GIF 图片。");
+    };
+    image.hidden = false;
+    image.src = `/api/assistant/skin?v=${Date.now()}`;
+  } catch (error) {
+    console.error(error);
+    throw error;
+  }
+}
+
+function clearPetSkinDisplay() {
+  const image = document.querySelector("#pet-skin-image");
+  image.onload = null;
+  image.onerror = null;
+  image.hidden = true;
+  image.removeAttribute("src");
+  document.querySelector(".pet-avatar").classList.remove("has-custom-skin");
+}
+
+async function uploadPetSkin(file) {
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    showToast("皮肤图片不能超过 5 MB。");
+    return;
+  }
+  try {
+    const result = await requestApi("/api/assistant/skin", {
+      method: "PUT",
+      headers: { "content-type": file.type },
+      body: file,
+    });
+    await refreshPetSkin();
+    showToast(result.warnings?.length
+      ? `皮肤已保存，但旧文件清理失败：${result.warnings.join("；")}`
+      : "小栖的新皮肤已保存到服务器。");
+  } catch (error) {
+    console.error(error);
+    showToast(`皮肤上传失败：${error.message}`);
+  } finally {
+    document.querySelector("#pet-skin-file").value = "";
+  }
+}
+
+async function resetPetSkin() {
+  try {
+    const result = await requestApi("/api/assistant/skin", { method: "DELETE", body: "{}" });
+    clearPetSkinDisplay();
+    showToast(result.warnings?.length
+      ? `已恢复默认形象，但皮肤文件清理失败：${result.warnings.join("；")}`
+      : "小栖已恢复默认形象。");
+  } catch (error) {
+    console.error(error);
+    showToast(`恢复默认形象失败：${error.message}`);
+  }
 }
 
 function appendChatMessage(role, content, pending = false) {
@@ -227,20 +389,128 @@ function resetChat() {
   appendChatMessage("assistant", "你好，我可以和你聊天，也可以帮你控制家里的设备。你想从哪里开始？");
 }
 
+async function loadChatHistory() {
+  const result = await requestApi("/api/chat/history");
+  chatHistory = result.messages;
+  chatMessages.replaceChildren();
+  if (!chatHistory.length) {
+    appendChatMessage("assistant", "你好，我可以和你聊天，也可以帮你控制家里的设备。你想从哪里开始？");
+    return;
+  }
+  for (const message of chatHistory) appendChatMessage(message.role, message.content);
+}
+
+async function persistChatHistory(messages) {
+  await requestApi("/api/chat/history", {
+    method: "POST",
+    body: JSON.stringify({ messages }),
+  });
+}
+
+async function clearChatHistory() {
+  if (!currentUser || !window.confirm("清空当前账号保存在家庭服务器上的聊天记录？此操作无法撤销。")) return;
+  try {
+    await requestApi("/api/chat/history", { method: "DELETE", body: "{}" });
+    resetChat();
+    showToast("服务器上的聊天记录已清空");
+  } catch (error) {
+    console.error(error);
+    showToast(`聊天记录清除失败：${error.message}`);
+  }
+}
+
 function speakAssistantReply(content) {
   if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) {
     showToast("当前浏览器不支持语音播报，回复仍会显示在聊天中。");
     return;
   }
+  const petWidget = document.querySelector("#pet-widget");
+  petWidget.classList.remove("is-speaking");
   window.speechSynthesis.cancel();
   const utterance = new window.SpeechSynthesisUtterance(content);
   utterance.lang = "zh-CN";
+  utterance.onstart = () => {
+    notePetActivity();
+    petWidget.classList.add("is-speaking");
+  };
+  utterance.onend = () => petWidget.classList.remove("is-speaking");
   utterance.onerror = (event) => {
+    petWidget.classList.remove("is-speaking");
     if (!["canceled", "interrupted"].includes(event.error)) {
       showToast(`语音播报失败：${event.error}`);
     }
   };
   window.speechSynthesis.speak(utterance);
+}
+
+function startVoiceRecognition(button) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showToast("当前浏览器不支持语音识别，请使用 Chrome/Edge 或输入文字指令。");
+    return;
+  }
+  if (!window.isSecureContext && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    showToast("语音识别需要 HTTPS 安全连接；请使用私人 VPN 提供的 HTTPS 地址。");
+    return;
+  }
+  if (activeVoiceRecognition) {
+    activeVoiceRecognition.stop();
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  activeVoiceRecognition = recognition;
+  activeVoiceButton = button;
+  recognition.lang = "zh-CN";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  notePetActivity();
+  button.classList.add("listening");
+  button.setAttribute("aria-pressed", "true");
+  document.querySelector("#pet-widget").classList.add("is-listening");
+  if (button.id === "pet-mic-button") {
+    document.querySelector("#pet-greeting").textContent = "我在听，请说出你想做什么。";
+  }
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript.trim();
+    if (!transcript) return;
+    document.querySelector("#assistant-input").value = transcript;
+    document.querySelector("#pet-greeting").textContent = `我听到“${transcript.slice(0, 48)}”，正在回复。`;
+    speakNextReply = true;
+    document.querySelector("#assistant-form").requestSubmit();
+  };
+  recognition.onerror = (event) => {
+    speakNextReply = false;
+    document.querySelector("#pet-widget").classList.remove("is-listening");
+    const message = event.error === "not-allowed"
+      ? "麦克风权限未开启，请在浏览器设置中允许使用麦克风。"
+      : `语音识别失败：${event.error}`;
+    showToast(message);
+    if (button.id === "pet-mic-button") document.querySelector("#pet-greeting").textContent = message;
+  };
+  recognition.onend = () => {
+    activeVoiceRecognition = null;
+    activeVoiceButton = null;
+    button.classList.remove("listening");
+    button.setAttribute("aria-pressed", "false");
+    document.querySelector("#pet-widget").classList.remove("is-listening");
+    if (button.id === "pet-mic-button"
+        && document.querySelector("#pet-greeting").textContent === "我在听，请说出你想做什么。") {
+      document.querySelector("#pet-greeting").textContent = "语音输入已停止。";
+    }
+  };
+  try {
+    window.speechSynthesis?.cancel();
+    recognition.start();
+  } catch (error) {
+    activeVoiceRecognition = null;
+    activeVoiceButton = null;
+    speakNextReply = false;
+    button.classList.remove("listening");
+    button.setAttribute("aria-pressed", "false");
+    document.querySelector("#pet-widget").classList.remove("is-listening");
+    showToast(`无法启动语音识别：${error.message}`);
+  }
 }
 
 async function changeDevice(id, update) {
@@ -282,6 +552,284 @@ async function applyScene(sceneName) {
   }
 }
 
+function focusAssistant() {
+  const assistantBar = document.querySelector(".assistant-bar");
+  assistantBar.scrollIntoView({ behavior: "smooth", block: "center" });
+  document.querySelector("#assistant-input").focus({ preventScroll: true });
+}
+
+function scrollToSection(sectionId) {
+  document.querySelector(`#${sectionId}`).scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function setPetPanelOpen(open) {
+  const panel = document.querySelector("#pet-panel");
+  const toggle = document.querySelector("#pet-toggle");
+  if (open === !panel.hidden) return;
+  notePetActivity();
+  if (!open && activeVoiceButton?.id === "pet-mic-button") activeVoiceRecognition?.stop();
+  panel.hidden = !open;
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.setAttribute("aria-label", open ? "关闭小栖快捷面板" : "打开小栖快捷面板");
+  if (open) updatePetPanelPlacement();
+  if (!open && panel.contains(document.activeElement)) toggle.focus({ preventScroll: true });
+}
+
+function updatePetPanelPlacement() {
+  const widget = document.querySelector("#pet-widget");
+  const panel = document.querySelector("#pet-panel");
+  const rect = widget.getBoundingClientRect();
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  const gap = 12;
+  const spaceAbove = Math.max(0, rect.top - gap * 2);
+  const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - (mobile ? 80 : gap) - gap);
+  const below = spaceAbove < 240 && spaceBelow > spaceAbove;
+  panel.style.maxHeight = `${Math.floor(Math.min(mobile ? 360 : 390, below ? spaceBelow : spaceAbove))}px`;
+  panel.style.left = `${Math.max(gap, Math.min(rect.right - panel.offsetWidth, window.innerWidth - panel.offsetWidth - gap))}px`;
+  panel.style.top = `${below ? rect.bottom + gap : rect.top - gap - panel.offsetHeight}px`;
+}
+
+function setPetProjectionPhase(phase) {
+  petProjectionPhase = phase;
+  const widget = document.querySelector("#pet-widget");
+  const away = phase === "entering" || phase === "projected";
+  if (away && widget.contains(document.activeElement)) document.activeElement.blur();
+  widget.inert = away;
+  if (away) widget.setAttribute("aria-hidden", "true");
+  else widget.removeAttribute("aria-hidden");
+  widget.dataset.projectionPhase = phase;
+  document.querySelector("#pet-ghost").dataset.projectionPhase = phase;
+  widget.classList.toggle("is-projecting", away);
+}
+
+function finishPetProjectionReturn() {
+  clearTimeout(petProjectionTimer);
+  petProjectionTimer = null;
+  document.querySelector("#pet-ghost").hidden = true;
+  setPetProjectionPhase("docked");
+}
+
+function hidePetProjection({ immediate = false } = {}) {
+  clearTimeout(petIdleTimer);
+  clearTimeout(petGhostTimer);
+  petIdleTimer = null;
+  petGhostTimer = null;
+  const ghost = document.querySelector("#pet-ghost");
+  if (immediate || document.hidden || petMotionPreference.matches || !currentUser) {
+    ghost.classList.remove("is-drifting");
+    finishPetProjectionReturn();
+    return;
+  }
+  if (petProjectionPhase === "docked" || petProjectionPhase === "returning") return;
+  clearTimeout(petProjectionTimer);
+  const position = ghost.getBoundingClientRect();
+  ghost.classList.remove("is-drifting");
+  ghost.style.transform = `translate(${position.left}px, ${position.top}px)`;
+  setPetProjectionPhase("returning");
+  petProjectionTimer = setTimeout(finishPetProjectionReturn, PET_PROJECTION_TRANSITION_DURATION);
+}
+
+function schedulePetProjection(delay = PET_IDLE_DELAY) {
+  clearTimeout(petIdleTimer);
+  petIdleTimer = null;
+  if (!petProjectionEnabled || !currentUser || document.hidden || petMotionPreference.matches) return;
+  petIdleTimer = setTimeout(showPetProjection, delay);
+}
+
+function notePetActivity(event) {
+  // A closing, scrolled panel can deliver its final scroll event after the preview opens.
+  if (event?.type === "scroll" && event.target === document.querySelector("#pet-panel") && event.target.hidden) return;
+  hidePetProjection();
+  schedulePetProjection();
+}
+
+function canShowPetProjection() {
+  return petProjectionEnabled && currentUser && !document.hidden && !petMotionPreference.matches
+    && document.querySelector("#pet-panel").hidden && !document.querySelector("dialog[open]")
+    && !voiceBusy
+    && !document.querySelector("#pet-widget").matches(".is-listening, .is-thinking, .is-speaking, .is-typing, .is-reacting");
+}
+
+function getPetGhostDestination() {
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  const leftMin = Math.min(mobile ? 12 : 236, Math.max(12, window.innerWidth - PET_GHOST_WIDTH - 12));
+  const leftMax = Math.max(leftMin, window.innerWidth - PET_GHOST_WIDTH - 12);
+  const topMin = 76;
+  const topMax = Math.max(topMin, window.innerHeight - PET_GHOST_HEIGHT - (mobile ? 88 : 16));
+  const dock = document.querySelector("#pet-widget").getBoundingClientRect();
+  const current = document.querySelector("#pet-ghost").getBoundingClientRect();
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const left = Math.round(leftMin + Math.random() * (leftMax - leftMin));
+    const top = Math.round(topMin + Math.random() * (topMax - topMin));
+    const overlapsDock = left < dock.right + 12 && left + PET_GHOST_WIDTH > dock.left - 12
+      && top < dock.bottom + 12 && top + PET_GHOST_HEIGHT > dock.top - 12;
+    if (!overlapsDock && Math.hypot(left - current.left, top - current.top) >= 48) return { left, top };
+  }
+  return { left: leftMin, top: topMin };
+}
+
+function movePetProjection() {
+  if (petProjectionPhase !== "projected") return;
+  if (!canShowPetProjection()) {
+    hidePetProjection();
+    schedulePetProjection(3000);
+    return;
+  }
+  const ghost = document.querySelector("#pet-ghost");
+  const { left, top } = getPetGhostDestination();
+  ghost.style.transform = `translate(${left}px, ${top}px)`;
+  clearTimeout(petGhostTimer);
+  petGhostTimer = setTimeout(movePetProjection, PET_GHOST_DRIFT_DURATION);
+}
+
+function showPetProjection() {
+  clearTimeout(petIdleTimer);
+  petIdleTimer = null;
+  if (!canShowPetProjection()) {
+    schedulePetProjection(3000);
+    return;
+  }
+  if (petProjectionPhase === "entering" || petProjectionPhase === "projected") return;
+  clearTimeout(petProjectionTimer);
+  clearTimeout(petGhostTimer);
+  petGhostTimer = null;
+  const ghost = document.querySelector("#pet-ghost");
+  ghost.classList.remove("is-drifting");
+  const { left, top } = getPetGhostDestination();
+  ghost.style.transform = `translate(${left}px, ${top}px)`;
+  ghost.hidden = false;
+  void ghost.offsetWidth;
+  setPetProjectionPhase("entering");
+  petProjectionTimer = setTimeout(() => {
+    petProjectionTimer = null;
+    if (!canShowPetProjection()) {
+      hidePetProjection();
+      schedulePetProjection(3000);
+      return;
+    }
+    setPetProjectionPhase("projected");
+    ghost.classList.add("is-drifting");
+    movePetProjection();
+  }, PET_PROJECTION_TRANSITION_DURATION);
+}
+
+function updatePetProjectionControls() {
+  const button = document.querySelector("#pet-projection-toggle");
+  button.setAttribute("aria-pressed", String(petProjectionEnabled));
+  button.textContent = petProjectionEnabled ? "关闭投影" : "开启投影";
+  document.querySelector("#pet-projection-preview").disabled = !petProjectionEnabled || petMotionPreference.matches;
+  document.querySelector("#pet-projection-status").textContent = petMotionPreference.matches
+    ? "减少动态效果：投影已暂停"
+    : petProjectionEnabled ? "静置 20 秒后，像素小栖出游" : "只在右下角陪伴";
+}
+
+function setPetProjectionEnabled(enabled) {
+  petProjectionEnabled = enabled;
+  updatePetProjectionControls();
+  notePetActivity();
+}
+
+function previewPetProjection() {
+  setPetPanelOpen(false);
+  clearTimeout(petReactionTimer);
+  document.querySelector("#pet-widget").classList.remove("is-reacting");
+  hidePetProjection();
+  showPetProjection();
+}
+
+function startPetCompanion() {
+  setPetProjectionEnabled(true);
+}
+
+function resetPetCompanion() {
+  petProjectionEnabled = false;
+  hidePetProjection({ immediate: true });
+  clearTimeout(petReactionTimer);
+  clearTimeout(petTypingTimer);
+  if (petGazeFrame !== null) cancelAnimationFrame(petGazeFrame);
+  petGazeFrame = null;
+  const widget = document.querySelector("#pet-widget");
+  widget.classList.remove("is-listening", "is-thinking", "is-typing", "is-speaking", "is-reacting");
+  document.querySelector("#pet-panel").hidden = true;
+  document.querySelector("#pet-toggle").setAttribute("aria-expanded", "false");
+  document.querySelector("#pet-toggle").setAttribute("aria-label", "打开小栖快捷面板");
+}
+
+function keepPetInBounds() {
+  notePetActivity();
+  if (!document.querySelector("#pet-panel").hidden) updatePetPanelPlacement();
+}
+
+function triggerPetReaction() {
+  const widget = document.querySelector("#pet-widget");
+  if (!currentUser) return;
+  notePetActivity();
+  widget.classList.remove("is-reacting");
+  void widget.offsetWidth;
+  widget.classList.add("is-reacting");
+  clearTimeout(petReactionTimer);
+  petReactionTimer = setTimeout(() => widget.classList.remove("is-reacting"), 700);
+}
+
+function updatePetTyping(event) {
+  clearTimeout(petTypingTimer);
+  notePetActivity();
+  const widget = document.querySelector("#pet-widget");
+  widget.classList.toggle("is-typing", Boolean(event.currentTarget.value));
+  petTypingTimer = setTimeout(() => widget.classList.remove("is-typing"), 550);
+}
+
+function stopPetTyping() {
+  clearTimeout(petTypingTimer);
+  document.querySelector("#pet-widget").classList.remove("is-typing");
+}
+
+function updatePetGaze(event) {
+  if (!currentUser || petMotionPreference.matches || event.pointerType === "touch") return;
+  if (petGazeFrame !== null) cancelAnimationFrame(petGazeFrame);
+  petGazeFrame = requestAnimationFrame(() => {
+    petGazeFrame = null;
+    const avatar = document.querySelector(".pet-avatar").getBoundingClientRect();
+    const horizontal = (event.clientX - (avatar.left + avatar.width / 2)) / Math.max(1, window.innerWidth / 2);
+    const vertical = (event.clientY - (avatar.top + avatar.height / 2)) / Math.max(1, window.innerHeight / 2);
+    const character = document.querySelector(".pet-character");
+    character.style.setProperty("--pet-gaze-x", `${Math.max(-1.6, Math.min(1.6, horizontal * 1.6))}px`);
+    character.style.setProperty("--pet-gaze-y", `${Math.max(-1.2, Math.min(1.2, vertical * 1.2))}px`);
+  });
+}
+
+function runPetAction(action) {
+  const greeting = document.querySelector("#pet-greeting");
+  if (action === "skin") {
+    setPetPanelOpen(false);
+    document.querySelector("#pet-skin-file").click();
+    return;
+  }
+  setPetPanelOpen(false);
+  if (action === "chat") {
+    greeting.textContent = "我在聊天区等你，有什么需要就告诉我。";
+    focusAssistant();
+  } else if (action === "devices") {
+    greeting.textContent = "已为你打开设备列表。";
+    setRoom("全部");
+    scrollToSection("devices");
+  } else if (action === "light") {
+    greeting.textContent = "好的，我来打开客厅的灯。";
+    scrollToSection("overview");
+    sendChatMessage("打开客厅的灯");
+  } else if (action === "scene") {
+    greeting.textContent = "好的，正在切换到观影模式。";
+    scrollToSection("scenes");
+    applyScene("观影模式");
+  } else if (action === "members") {
+    greeting.textContent = "家庭成员和关联设备都在这里。";
+    scrollToSection("members");
+  } else if (action === "preferences") {
+    greeting.textContent = "我帮你打开个人偏好设置。";
+    document.querySelector("#preferences-button").click();
+  }
+}
+
 async function sendChatMessage(rawMessage) {
   const content = rawMessage.trim();
   if (!content) return;
@@ -290,16 +838,30 @@ async function sendChatMessage(rawMessage) {
 
   appendChatMessage("user", content);
   chatHistory.push({ role: "user", content });
+  chatHistory = chatHistory.slice(-200);
   const pending = appendChatMessage("assistant", "正在思考…", true);
   const input = document.querySelector("#assistant-input");
   const submit = document.querySelector("#assistant-form button[type='submit']");
   const microphone = document.querySelector("#mic-button");
+  const petMicrophone = document.querySelector("#pet-mic-button");
   const clearButton = document.querySelector("#clear-chat");
   input.disabled = true;
   submit.disabled = true;
   microphone.disabled = true;
+  petMicrophone.disabled = true;
   clearButton.disabled = true;
   document.querySelector("#assistant-status").textContent = "正在回复…";
+  stopPetTyping();
+  notePetActivity();
+  document.querySelector("#pet-greeting").textContent = "我正在想，马上回复你。";
+  document.querySelector("#pet-widget").classList.add("is-thinking");
+
+  try {
+    await persistChatHistory([{ role: "user", content }]);
+  } catch (error) {
+    console.error(error);
+    showToast(`用户消息未能保存到服务器：${error.message}`);
+  }
 
   try {
     const result = await requestApi("/api/chat", {
@@ -308,9 +870,17 @@ async function sendChatMessage(rawMessage) {
     });
     pending.remove();
     appendChatMessage("assistant", result.reply);
+    triggerPetReaction();
     if (shouldSpeakReply) speakAssistantReply(result.reply);
+    document.querySelector("#pet-greeting").textContent = result.reply.slice(0, 120);
     chatHistory.push({ role: "assistant", content: result.reply });
-    chatHistory = chatHistory.slice(-12);
+    chatHistory = chatHistory.slice(-200);
+    try {
+      await persistChatHistory([{ role: "assistant", content: result.reply }]);
+    } catch (error) {
+      console.error(error);
+      showToast(`回复已完成，但聊天记录未能保存到服务器：${error.message}`);
+    }
     syncDevices(result.devices);
     renderDevices();
     updateSummary();
@@ -321,12 +891,15 @@ async function sendChatMessage(rawMessage) {
     console.error(error);
     pending.remove();
     appendChatMessage("assistant", `这次没能完成：${error.message}`);
+    document.querySelector("#pet-greeting").textContent = `这次没能完成：${error.message}`.slice(0, 120);
   } finally {
     input.disabled = false;
     submit.disabled = false;
     microphone.disabled = false;
+    petMicrophone.disabled = false;
     clearButton.disabled = false;
     input.focus();
+    document.querySelector("#pet-widget").classList.remove("is-thinking");
   }
 }
 
@@ -490,17 +1063,11 @@ async function deleteMember() {
     const result = await requestApi(`/api/members/${encodeURIComponent(id)}`, { method: "DELETE" });
     members = result.members;
     if (currentSpeakerId === id) currentSpeakerId = null;
-    try {
-      const profiles = readVoiceprints();
-      delete profiles[id];
-      writeVoiceprints(profiles);
-    } catch (error) {
-      console.error(error);
-      document.querySelector("#speaker-result").textContent = `成员已删除，但此浏览器的声纹数据未能清理：${error.message}`;
-    }
     renderMembers();
     document.querySelector("#member-dialog").close();
-    showToast("家庭成员已删除");
+    showToast(result.warnings?.length
+      ? `家庭成员已删除，但皮肤文件清理失败：${result.warnings.join("；")}`
+      : "家庭成员已删除");
   } catch (error) {
     console.error(error);
     document.querySelector("#member-form-error").textContent = error.message;
@@ -510,17 +1077,16 @@ async function deleteMember() {
 async function enrollMemberVoice(memberId) {
   const member = members.find((item) => item.id === memberId);
   if (!member) return;
-  if (!window.confirm(`声纹特征只保存在此浏览器，不会上传服务器。请确认 ${member.name} 同意录入。此实验识别不能用于安防授权。继续吗？`)) return;
-  let profiles;
+  if (!window.confirm(
+    `请确认 ${member.name} 同意录入。只会将本地提取的声纹特征向量保存到家庭服务器，不保存或上传原始录音；删除该成员时会一并清除声纹档案。此实验识别不能用于安防授权。继续吗？`,
+  )) return;
+  if (voiceprintCounts[memberId] >= 3 && !window.confirm("是否重新录入并替换服务器上的 3 个样本？")) return;
+  if (!window.SpeakerID) {
+    document.querySelector("#speaker-result").textContent = "本地声纹模块未加载，请刷新页面重试。";
+    return;
+  }
   try {
-    profiles = readVoiceprints();
-    const existing = Array.isArray(profiles[memberId]?.vectors) ? profiles[memberId].vectors : [];
-    if (existing.length >= 3) {
-      if (!window.confirm("已达到录入样本数，是否重新录入？")) return;
-      existing.length = 0;
-    }
-    if (!window.SpeakerID) throw new Error("本地声纹模块未加载，请刷新页面重试。");
-    const vectors = existing.slice(0, 2);
+    const vectors = [];
     voiceBusy = true;
     renderMembers();
     while (vectors.length < 3) {
@@ -528,11 +1094,13 @@ async function enrollMemberVoice(memberId) {
       document.querySelector("#speaker-result").textContent = `录音 ${sampleNumber}/3：请用正常音量重复说“${enrollmentPhrase}”`;
       const vector = await window.SpeakerID.captureFeatures(3000);
       vectors.push(vector);
-      profiles[memberId] = { vectors };
-      writeVoiceprints(profiles);
-      renderMembers();
     }
-    document.querySelector("#speaker-result").textContent = `${member.name} 的声音样本已保存在此浏览器。`;
+    await requestApi(`/api/voiceprints/${encodeURIComponent(memberId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ vectors }),
+    });
+    voiceprintCounts[memberId] = 3;
+    document.querySelector("#speaker-result").textContent = `${member.name} 的声纹特征已保存到家庭服务器。`;
     showToast(`${member.name} 的声纹实验样本已录入`);
   } catch (error) {
     console.error(error);
@@ -546,17 +1114,7 @@ async function enrollMemberVoice(memberId) {
 async function identifySpeaker() {
   const button = document.querySelector("#identify-speaker");
   currentSpeakerId = null;
-  let profiles;
-  try {
-    profiles = readVoiceprints();
-  } catch (error) {
-    document.querySelector("#speaker-result").textContent = error.message;
-    return;
-  }
-  const candidates = members
-    .map((member) => ({ member, vectors: profiles[member.id]?.vectors }))
-    .filter((candidate) => Array.isArray(candidate.vectors) && candidate.vectors.length >= 3);
-  if (!candidates.length) {
+  if (!Object.values(voiceprintCounts).some((count) => count >= 3)) {
     document.querySelector("#speaker-result").textContent = "尚无完成录入的成员，请先为成员录入 3 段声音样本。";
     return;
   }
@@ -570,15 +1128,15 @@ async function identifySpeaker() {
   renderMembers();
   try {
     const sample = await window.SpeakerID.captureFeatures(3000);
-    const scored = candidates.map(({ member, vectors }) => {
-      const similarities = vectors.map((vector) => window.SpeakerID.similarity(sample, vector)).sort((a, b) => b - a);
-      return { member, score: (similarities[0] + similarities[1]) / 2 };
-    }).sort((a, b) => b.score - a.score);
-    const best = scored[0];
-    const margin = best.score - (scored[1]?.score ?? 0);
-    if (best.score >= 0.84 && margin >= 0.04) {
-      currentSpeakerId = best.member.id;
-      document.querySelector("#speaker-result").textContent = `可能是 ${best.member.name}（声纹相似度 ${Math.round(best.score * 100)}%，仅供实验参考，不代表身份已验证）。`;
+    const match = await requestApi("/api/voiceprints/identify", {
+      method: "POST",
+      body: JSON.stringify({ vector: sample }),
+    });
+    if (match.memberId) {
+      const member = members.find((item) => item.id === match.memberId);
+      if (!member) throw new Error("服务器返回了不存在的家庭成员。");
+      currentSpeakerId = member.id;
+      document.querySelector("#speaker-result").textContent = `可能是 ${member.name}（声纹相似度 ${Math.round(match.score * 100)}%，仅供实验参考，不代表身份已验证）。`;
     } else {
       currentSpeakerId = "unknown";
       document.querySelector("#speaker-result").textContent = "未能可靠匹配到已录入成员，按未知说话人处理。";
@@ -595,6 +1153,57 @@ async function identifySpeaker() {
 }
 
 document.querySelector("#add-device").addEventListener("click", () => openDeviceDialog());
+document.querySelector("#fullscreen-button").addEventListener("click", toggleFullscreen);
+document.addEventListener("fullscreenchange", updateFullscreenButton);
+updateFullscreenButton();
+document.querySelector("#pet-toggle").addEventListener("click", () => {
+  const panel = document.querySelector("#pet-panel");
+  setPetPanelOpen(panel.hidden);
+});
+document.querySelector("#pet-close").addEventListener("click", () => setPetPanelOpen(false));
+document.querySelector("#pet-projection-toggle").addEventListener("click", () => setPetProjectionEnabled(!petProjectionEnabled));
+document.querySelector("#pet-projection-preview").addEventListener("click", previewPetProjection);
+document.querySelector("#pet-panel").addEventListener("click", (event) => {
+  const action = event.target.closest("[data-pet-action]");
+  if (action) runPetAction(action.dataset.petAction);
+});
+document.querySelector("#pet-mic-button").addEventListener("click", (event) => {
+  startVoiceRecognition(event.currentTarget);
+});
+document.querySelector("#assistant-input").addEventListener("input", updatePetTyping);
+document.querySelector("#assistant-input").addEventListener("blur", stopPetTyping);
+document.addEventListener("pointermove", updatePetGaze, { passive: true });
+for (const eventName of ["pointermove", "pointerdown", "keydown", "input", "wheel", "scroll"]) {
+  document.addEventListener(eventName, notePetActivity, { passive: true, capture: true });
+}
+document.querySelector("#pet-toggle").addEventListener("click", triggerPetReaction);
+document.querySelector("#pet-skin-file").addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (file) uploadPetSkin(file);
+});
+document.querySelector("#pet-skin-reset").addEventListener("click", resetPetSkin);
+document.addEventListener("click", (event) => {
+  if (!document.querySelector("#pet-widget").contains(event.target)) setPetPanelOpen(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !document.querySelector("#pet-panel").hidden) setPetPanelOpen(false);
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    hidePetProjection();
+    stopPetTyping();
+  }
+  else notePetActivity();
+});
+petMotionPreference.addEventListener("change", () => {
+  if (petMotionPreference.matches) {
+    document.querySelector(".pet-character").style.removeProperty("--pet-gaze-x");
+    document.querySelector(".pet-character").style.removeProperty("--pet-gaze-y");
+  }
+  updatePetProjectionControls();
+  notePetActivity();
+});
+window.addEventListener("resize", keepPetInBounds);
 document.querySelector("#device-config-form").addEventListener("submit", saveDevice);
 document.querySelector("#delete-device").addEventListener("click", deleteDevice);
 document.querySelectorAll("[data-close-device-dialog]").forEach((button) => {
@@ -665,6 +1274,7 @@ document.querySelector("#assistant-form").addEventListener("submit", (event) => 
   const input = document.querySelector("#assistant-input");
   sendChatMessage(input.value);
   input.value = "";
+  document.querySelector("#pet-widget").classList.remove("is-typing");
 });
 
 document.querySelector(".assistant-suggestions").addEventListener("click", (event) => {
@@ -673,55 +1283,15 @@ document.querySelector(".assistant-suggestions").addEventListener("click", (even
   sendChatMessage(suggestion.dataset.chatPrompt);
 });
 
-document.querySelector("#clear-chat").addEventListener("click", resetChat);
+document.querySelector("#clear-chat").addEventListener("click", clearChatHistory);
 resetChat();
 
-document.querySelector("#mic-button").addEventListener("click", () => {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    showToast("当前浏览器不支持语音识别，请使用 Chrome/Edge 或输入文字指令。");
-    return;
-  }
-  if (!window.isSecureContext && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-    showToast("语音识别需要 HTTPS 安全连接；请使用私人 VPN 提供的 HTTPS 地址。");
-    return;
-  }
-
-  const recognition = new SpeechRecognition();
-  recognition.lang = "zh-CN";
-  recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
-  const button = document.querySelector("#mic-button");
-  const input = document.querySelector("#assistant-input");
-  button.classList.add("listening");
-  recognition.onresult = (event) => {
-    input.value = event.results[0][0].transcript;
-    speakNextReply = true;
-    document.querySelector("#assistant-form").requestSubmit();
-  };
-  recognition.onerror = (event) => {
-    speakNextReply = false;
-    const message = event.error === "not-allowed"
-      ? "麦克风权限未开启，请在浏览器设置中允许使用麦克风。"
-      : `语音识别失败：${event.error}`;
-    showToast(message);
-  };
-  recognition.onend = () => button.classList.remove("listening");
-  try {
-    window.speechSynthesis?.cancel();
-    recognition.start();
-  } catch (error) {
-    speakNextReply = false;
-    button.classList.remove("listening");
-    showToast(`无法启动语音识别：${error.message}`);
-  }
+document.querySelector("#mic-button").addEventListener("click", (event) => {
+  startVoiceRecognition(event.currentTarget);
 });
 
 document.querySelectorAll("[data-focus-assistant]").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelector("#assistant-input").focus();
-    document.querySelector(".assistant-bar").scrollIntoView({ behavior: "smooth", block: "center" });
-  });
+  button.addEventListener("click", focusAssistant);
 });
 
 document.querySelectorAll("[data-scroll-devices], [data-show-all]").forEach((button) => {
@@ -742,6 +1312,7 @@ document.querySelector("#greeting").textContent = new Intl.DateTimeFormat("zh-CN
 }).format(new Date()) + " · 美好的一天";
 
 function showLogin(errorMessage = "") {
+  resetPetCompanion();
   currentUser = null;
   document.querySelector("#app-shell").hidden = true;
   document.querySelector("#login-screen").hidden = false;
@@ -751,6 +1322,7 @@ function showLogin(errorMessage = "") {
 
 async function initializeDashboard(user) {
   currentUser = user;
+  startPetCompanion();
   document.querySelector("#login-screen").hidden = true;
   document.querySelector("#app-shell").hidden = false;
   document.querySelector("#current-user-label").textContent = user.displayName;
@@ -762,6 +1334,10 @@ async function initializeDashboard(user) {
   document.querySelector("#add-member").hidden = user.role !== "admin";
   renderDevices();
   updateSummary();
+  refreshPetSkin().catch((error) => {
+    console.error(error);
+    showToast(`无法载入小栖皮肤：${error.message}`);
+  });
   try {
     const health = await requestApi("/api/health");
     document.querySelector("#connection-label").textContent = "本机服务已连接";
@@ -775,6 +1351,15 @@ async function initializeDashboard(user) {
         : "Home Assistant 设备模式";
     await refreshDevices();
     await refreshMembers();
+    await refreshVoiceprints(true);
+    try {
+      await loadChatHistory();
+    } catch (error) {
+      console.error(error);
+      resetChat();
+      document.querySelector("#assistant-status").textContent = "聊天记录加载失败";
+      showToast(`无法载入服务器聊天记录：${error.message}`);
+    }
   } catch (error) {
     console.error(error);
     document.querySelector("#connection-label").textContent = "本机服务未连接";
