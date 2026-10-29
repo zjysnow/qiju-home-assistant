@@ -1,0 +1,51 @@
+BongoCat standard model
+Source: https://github.com/vladelaina/BongoCat
+Revision: 29ccda67802e6b6727acae0bdf42f50277f9aade
+Path: resources/assets/models/standard
+Model, textures and expressions: MIT, see LICENSE-MIT.txt.
+The BongoCat native application source is not included.
+
+Live2D Cubism Core is separately licensed proprietary Redistributable Code.
+Source: https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js
+Terms: https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html
+See LIVE2D-LICENSE.html. It is not covered by the model's MIT license.
+The bundled model is the fixed standard model. The optional local Shorekeeper model
+is separately licensed by its author and is not included in these MIT assets.
+Commercial distribution and expandable/avatar applications may require
+additional Live2D publication permission. Review the terms before deployment.
+
+Browser runtime components under the MIT license:
+PixiJS 6.5.10
+Copyright (c) 2013-2017 Mathew Groves, Chad Engler
+https://github.com/pixijs/pixijs
+
+@pixi/unsafe-eval 6.5.10 (Pixi CSP compatibility adapter)
+Copyright (c) 2013-2019 Mathew Groves, Chad Engler
+https://github.com/pixijs/pixijs
+
+pixi-live2d-display 0.4.0
+Copyright (c) 2020 Guan
+https://github.com/guansss/pixi-live2d-display
+
+The following license applies to these three browser runtime components,
+not to Live2D Cubism Core:
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

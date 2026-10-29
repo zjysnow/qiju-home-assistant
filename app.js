@@ -13,8 +13,17 @@ const rooms = ["客厅", "卧室", "厨房", "阳台"];
 const PET_IDLE_DELAY = 20000;
 const PET_GHOST_WIDTH = 96;
 const PET_GHOST_HEIGHT = 112;
-const PET_GHOST_DRIFT_DURATION = 6500;
+const PET_GHOST_FLIGHT_SPEED = 100;
 const PET_PROJECTION_TRANSITION_DURATION = 640;
+const PET_BEHAVIORS = {
+  stretch: { label: "伸个懒腰", duration: 2400 },
+  groom: { label: "洗洗小脸", duration: 2600 },
+  sleep: { label: "打个小盹", duration: 4200 },
+  cuddle: { label: "喜欢你的摸摸", duration: 1800 },
+  snack: { label: "吃点小零食", duration: 2600 },
+  jump: { label: "开心跳一跳", duration: 1600 },
+  dance: { label: "摇摆小舞步", duration: 3200 },
+};
 
 const icons = {
   light: "☼",
@@ -52,12 +61,20 @@ let activeVoiceRecognition = null;
 let activeVoiceButton = null;
 let petProjectionEnabled = true;
 let petIdleTimer = null;
-let petGhostTimer = null;
+let petGhostFrame = null;
+let petGhostFlight = null;
 let petProjectionTimer = null;
 let petProjectionPhase = "docked";
 let petReactionTimer = null;
 let petGazeFrame = null;
 let petTypingTimer = null;
+let petBehaviorTimer = null;
+let petAmbientTimer = null;
+let petBehaviorIsAmbient = false;
+let petLastAmbientBehavior = "";
+let bongoCompanion = null;
+let petModelGeneration = 0;
+let petModelLoading = null;
 const petMotionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
 const voiceStorageKey = "qiju-local-voiceprints-v1";
 const enrollmentPhrase = "小栖你好，今天家里很舒服。";
@@ -343,6 +360,7 @@ async function uploadPetSkin(file) {
       body: file,
     });
     await refreshPetSkin();
+    resetPetModel();
     showToast(result.warnings?.length
       ? `皮肤已保存，但旧文件清理失败：${result.warnings.join("；")}`
       : "小栖的新皮肤已保存到服务器。");
@@ -358,6 +376,7 @@ async function resetPetSkin() {
   try {
     const result = await requestApi("/api/assistant/skin", { method: "DELETE", body: "{}" });
     clearPetSkinDisplay();
+    resetPetModel();
     showToast(result.warnings?.length
       ? `已恢复默认形象，但皮肤文件清理失败：${result.warnings.join("；")}`
       : "小栖已恢复默认形象。");
@@ -430,6 +449,7 @@ function speakAssistantReply(content) {
   const utterance = new window.SpeechSynthesisUtterance(content);
   utterance.lang = "zh-CN";
   utterance.onstart = () => {
+    stopPetBehavior();
     notePetActivity();
     petWidget.classList.add("is-speaking");
   };
@@ -464,6 +484,7 @@ function startVoiceRecognition(button) {
   recognition.lang = "zh-CN";
   recognition.interimResults = false;
   recognition.maxAlternatives = 1;
+  stopPetBehavior();
   notePetActivity();
   button.classList.add("listening");
   button.setAttribute("aria-pressed", "true");
@@ -611,21 +632,34 @@ function finishPetProjectionReturn() {
 
 function hidePetProjection({ immediate = false } = {}) {
   clearTimeout(petIdleTimer);
-  clearTimeout(petGhostTimer);
+  if (petGhostFrame !== null) cancelAnimationFrame(petGhostFrame);
   petIdleTimer = null;
-  petGhostTimer = null;
+  petGhostFrame = null;
+  petGhostFlight = null;
   const ghost = document.querySelector("#pet-ghost");
   if (immediate || document.hidden || petMotionPreference.matches || !currentUser) {
-    ghost.classList.remove("is-drifting");
+    ghost.classList.remove("is-flying");
     finishPetProjectionReturn();
     return;
   }
   if (petProjectionPhase === "docked" || petProjectionPhase === "returning") return;
   clearTimeout(petProjectionTimer);
   const position = ghost.getBoundingClientRect();
-  ghost.classList.remove("is-drifting");
+  ghost.classList.remove("is-flying");
   ghost.style.transform = `translate(${position.left}px, ${position.top}px)`;
+  void ghost.offsetWidth;
   setPetProjectionPhase("returning");
+  if (ghost.dataset.form === "swallow") {
+    const dock = document.querySelector("#pet-widget").getBoundingClientRect();
+    const left = dock.left + (dock.width - PET_GHOST_WIDTH) / 2;
+    const top = dock.top + (dock.height - PET_GHOST_HEIGHT) / 2;
+    const heading = Math.atan2(top - position.top, left - position.left);
+    ghost.dataset.flightView = Math.abs(Math.cos(heading)) > .88 ? "side" : "quarter";
+    ghost.style.setProperty("--pet-flight-heading", `${heading * 180 / Math.PI + 90}deg`);
+    ghost.style.setProperty("--pet-flight-bank", "0deg");
+    ghost.style.setProperty("--pet-flight-facing", Math.cos(heading) < 0 ? "-1" : "1");
+    ghost.style.transform = `translate(${left}px, ${top}px)`;
+  }
   petProjectionTimer = setTimeout(finishPetProjectionReturn, PET_PROJECTION_TRANSITION_DURATION);
 }
 
@@ -639,36 +673,166 @@ function schedulePetProjection(delay = PET_IDLE_DELAY) {
 function notePetActivity(event) {
   // A closing, scrolled panel can deliver its final scroll event after the preview opens.
   if (event?.type === "scroll" && event.target === document.querySelector("#pet-panel") && event.target.hidden) return;
+  if (petBehaviorIsAmbient || document.hidden || petMotionPreference.matches) stopPetBehavior();
+  schedulePetAmbient();
   hidePetProjection();
   schedulePetProjection();
+}
+
+function stopPetBehavior() {
+  clearTimeout(petBehaviorTimer);
+  petBehaviorTimer = null;
+  petBehaviorIsAmbient = false;
+  const widget = document.querySelector("#pet-widget");
+  if (widget.dataset.petState === widget.dataset.petBehavior) widget.dataset.petState = "idle";
+  delete widget.dataset.petBehavior;
+  widget.classList.remove("is-performing");
+}
+
+function canPerformPetBehavior() {
+  return currentUser && !document.hidden && !voiceBusy && !document.querySelector("dialog[open]")
+    && !document.querySelector("#pet-widget").matches(".is-listening, .is-thinking, .is-speaking, .is-typing");
+}
+
+function playPetBehavior(behavior, { ambient = false } = {}) {
+  const action = Object.hasOwn(PET_BEHAVIORS, behavior) ? PET_BEHAVIORS[behavior] : null;
+  if (!action) throw new Error(`Unknown pet behavior: ${behavior}`);
+  if (!canPerformPetBehavior() || (ambient && (petMotionPreference.matches
+      || document.querySelector("#pet-widget").classList.contains("is-reacting")))) return false;
+  if (!ambient) {
+    clearTimeout(petReactionTimer);
+    document.querySelector("#pet-widget").classList.remove("is-reacting");
+    setPetPanelOpen(false);
+    notePetActivity();
+  }
+  if (petProjectionPhase !== "docked" && petProjectionPhase !== "returning") return false;
+  stopPetBehavior();
+  const widget = document.querySelector("#pet-widget");
+  widget.dataset.petBehavior = behavior;
+  void widget.offsetWidth;
+  widget.classList.add("is-performing");
+  petBehaviorIsAmbient = ambient;
+  if (!ambient) {
+    const label = behavior === "groom" && widget.dataset.petAvatar !== "cat" && !bongoCompanion ? "理理头发" : action.label;
+    document.querySelector("#pet-greeting").textContent = `${label}！`;
+    document.querySelector("#pet-feedback").textContent = `${label}！`;
+  }
+  petBehaviorTimer = setTimeout(stopPetBehavior, action.duration);
+  return true;
+}
+
+function schedulePetAmbient() {
+  clearTimeout(petAmbientTimer);
+  petAmbientTimer = null;
+  if (!currentUser || document.hidden || petMotionPreference.matches) return;
+  petAmbientTimer = setTimeout(() => {
+    petAmbientTimer = null;
+    if (petProjectionPhase === "docked" && document.querySelector("#pet-panel").hidden
+        && canPerformPetBehavior() && !document.querySelector("#pet-widget").classList.contains("is-performing")) {
+      const choices = ["stretch", "groom", "sleep"].filter((behavior) => behavior !== petLastAmbientBehavior);
+      const behavior = choices[Math.floor(Math.random() * choices.length)];
+      if (playPetBehavior(behavior, { ambient: true })) petLastAmbientBehavior = behavior;
+    }
+    schedulePetAmbient();
+  }, 6000 + Math.random() * 3000);
 }
 
 function canShowPetProjection() {
   return petProjectionEnabled && currentUser && !document.hidden && !petMotionPreference.matches
     && document.querySelector("#pet-panel").hidden && !document.querySelector("dialog[open]")
     && !voiceBusy
-    && !document.querySelector("#pet-widget").matches(".is-listening, .is-thinking, .is-speaking, .is-typing, .is-reacting");
+    && !document.querySelector("#pet-widget").matches(".is-listening, .is-thinking, .is-speaking, .is-typing, .is-reacting")
+    && (!document.querySelector("#pet-widget").classList.contains("is-performing") || petBehaviorIsAmbient);
 }
 
-function getPetGhostDestination() {
+function getPetGhostBounds() {
   const mobile = window.matchMedia("(max-width: 760px)").matches;
   const leftMin = Math.min(mobile ? 12 : 236, Math.max(12, window.innerWidth - PET_GHOST_WIDTH - 12));
   const leftMax = Math.max(leftMin, window.innerWidth - PET_GHOST_WIDTH - 12);
   const topMin = 76;
   const topMax = Math.max(topMin, window.innerHeight - PET_GHOST_HEIGHT - (mobile ? 88 : 16));
+  return { leftMin, leftMax, topMin, topMax };
+}
+
+function petGhostOverlapsDock(point, dock) {
+  return point.left < dock.right + 12 && point.left + PET_GHOST_WIDTH > dock.left - 12
+    && point.top < dock.bottom + 12 && point.top + PET_GHOST_HEIGHT > dock.top - 12;
+}
+
+function getPetGhostDestination() {
+  const { leftMin, leftMax, topMin, topMax } = getPetGhostBounds();
   const dock = document.querySelector("#pet-widget").getBoundingClientRect();
   const current = document.querySelector("#pet-ghost").getBoundingClientRect();
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const left = Math.round(leftMin + Math.random() * (leftMax - leftMin));
     const top = Math.round(topMin + Math.random() * (topMax - topMin));
-    const overlapsDock = left < dock.right + 12 && left + PET_GHOST_WIDTH > dock.left - 12
-      && top < dock.bottom + 12 && top + PET_GHOST_HEIGHT > dock.top - 12;
-    if (!overlapsDock && Math.hypot(left - current.left, top - current.top) >= 48) return { left, top };
+    if (!petGhostOverlapsDock({ left, top }, dock) && Math.hypot(left - current.left, top - current.top) >= 48) return { left, top };
   }
   return { left: leftMin, top: topMin };
 }
 
-function movePetProjection() {
+function getPetFlightPoint(flight, progress) {
+  const t = progress;
+  const u = 1 - t;
+  const [a, b, c, d] = flight.points;
+  const left = u ** 3 * a.left + 3 * u ** 2 * t * b.left + 3 * u * t ** 2 * c.left + t ** 3 * d.left;
+  const top = u ** 3 * a.top + 3 * u ** 2 * t * b.top + 3 * u * t ** 2 * c.top + t ** 3 * d.top;
+  const dx = 3 * u ** 2 * (b.left - a.left) + 6 * u * t * (c.left - b.left) + 3 * t ** 2 * (d.left - c.left);
+  const dy = 3 * u ** 2 * (b.top - a.top) + 6 * u * t * (c.top - b.top) + 3 * t ** 2 * (d.top - c.top);
+  return { left, top, heading: Math.hypot(dx, dy) > .01 ? Math.atan2(dy, dx) : flight.heading };
+}
+
+function createPetGhostFlight(from, destination, heading, timestamp) {
+  const bounds = getPetGhostBounds();
+  const dock = document.querySelector("#pet-widget").getBoundingClientRect();
+  const clamp = (point) => ({
+    left: Math.max(bounds.leftMin, Math.min(bounds.leftMax, point.left)),
+    top: Math.max(bounds.topMin, Math.min(bounds.topMax, point.top)),
+  });
+  const direction = Math.atan2(destination.top - from.top, destination.left - from.left);
+  const startHeading = heading ?? direction;
+  const endHeading = direction + (Math.random() - .5) * .8;
+  const handle = Math.min(100, Math.hypot(destination.left - from.left, destination.top - from.top) * .35);
+  const flight = {
+    points: [
+      from,
+      clamp({ left: from.left + Math.cos(startHeading) * handle, top: from.top + Math.sin(startHeading) * handle }),
+      clamp({ left: destination.left - Math.cos(endHeading) * handle, top: destination.top - Math.sin(endHeading) * handle }),
+      destination,
+    ],
+    heading: startHeading,
+    startedAt: timestamp,
+    lastFrame: timestamp,
+  };
+  // Keep the entire control hull outside the dock, including between sampled frames.
+  const safeHull = flight.points.every((point) => point.left + PET_GHOST_WIDTH <= dock.left - 12)
+    || flight.points.every((point) => point.top + PET_GHOST_HEIGHT <= dock.top - 12)
+    || flight.points.every((point) => point.left >= dock.right + 12)
+    || flight.points.every((point) => point.top >= dock.bottom + 12);
+  if (!safeHull) {
+    const corner = clamp({
+      left: Math.min(from.left, destination.left, dock.left - PET_GHOST_WIDTH - 16),
+      top: Math.min(from.top, destination.top, dock.top - PET_GHOST_HEIGHT - 16),
+    });
+    const end = Math.hypot(corner.left - from.left, corner.top - from.top) > .01 ? corner : destination;
+    flight.points = [from,
+      { left: from.left + (end.left - from.left) / 3, top: from.top + (end.top - from.top) / 3 },
+      { left: from.left + (end.left - from.left) * 2 / 3, top: from.top + (end.top - from.top) * 2 / 3 },
+      end];
+  }
+  let length = 0;
+  let previous = from;
+  for (let index = 1; index <= 40; index += 1) {
+    const point = getPetFlightPoint(flight, index / 40);
+    length += Math.hypot(point.left - previous.left, point.top - previous.top);
+    previous = point;
+  }
+  flight.duration = Math.max(900, Math.min(6500, length / PET_GHOST_FLIGHT_SPEED * 1000));
+  return flight;
+}
+
+function movePetProjection(timestamp) {
+  petGhostFrame = null;
   if (petProjectionPhase !== "projected") return;
   if (!canShowPetProjection()) {
     hidePetProjection();
@@ -676,10 +840,25 @@ function movePetProjection() {
     return;
   }
   const ghost = document.querySelector("#pet-ghost");
-  const { left, top } = getPetGhostDestination();
-  ghost.style.transform = `translate(${left}px, ${top}px)`;
-  clearTimeout(petGhostTimer);
-  petGhostTimer = setTimeout(movePetProjection, PET_GHOST_DRIFT_DURATION);
+  if (!petGhostFlight || timestamp >= petGhostFlight.startedAt + petGhostFlight.duration) {
+    const position = ghost.getBoundingClientRect();
+    petGhostFlight = createPetGhostFlight({ left: position.left, top: position.top },
+      getPetGhostDestination(), petGhostFlight?.heading, timestamp);
+  }
+  const flight = petGhostFlight;
+  const progress = Math.min(1, (timestamp - flight.startedAt) / flight.duration);
+  const point = getPetFlightPoint(flight, progress);
+  const turn = Math.atan2(Math.sin(point.heading - flight.heading), Math.cos(point.heading - flight.heading));
+  const smoothing = Math.min(1, (timestamp - flight.lastFrame) / 100);
+  flight.heading += turn * smoothing;
+  flight.lastFrame = timestamp;
+  const horizontal = Math.abs(Math.cos(flight.heading));
+  ghost.dataset.flightView = horizontal > .88 ? "side" : horizontal > .4 ? "quarter" : "front";
+  if (horizontal > .4) ghost.style.setProperty("--pet-flight-facing", Math.cos(flight.heading) < 0 ? "-1" : "1");
+  ghost.style.setProperty("--pet-flight-heading", `${flight.heading * 180 / Math.PI + 90}deg`);
+  ghost.style.setProperty("--pet-flight-bank", `${Math.max(-18, Math.min(18, turn * 90))}deg`);
+  ghost.style.transform = `translate(${point.left}px, ${point.top}px)`;
+  petGhostFrame = requestAnimationFrame(movePetProjection);
 }
 
 function showPetProjection() {
@@ -690,11 +869,19 @@ function showPetProjection() {
     return;
   }
   if (petProjectionPhase === "entering" || petProjectionPhase === "projected") return;
+  stopPetBehavior();
+  clearTimeout(petAmbientTimer);
+  petAmbientTimer = null;
   clearTimeout(petProjectionTimer);
-  clearTimeout(petGhostTimer);
-  petGhostTimer = null;
+  if (petGhostFrame !== null) cancelAnimationFrame(petGhostFrame);
+  petGhostFrame = null;
+  petGhostFlight = null;
   const ghost = document.querySelector("#pet-ghost");
-  ghost.classList.remove("is-drifting");
+  ghost.classList.remove("is-flying");
+  ghost.dataset.flightView = "front";
+  ghost.style.setProperty("--pet-flight-heading", "0deg");
+  ghost.style.setProperty("--pet-flight-bank", "0deg");
+  ghost.style.setProperty("--pet-flight-facing", "1");
   const { left, top } = getPetGhostDestination();
   ghost.style.transform = `translate(${left}px, ${top}px)`;
   ghost.hidden = false;
@@ -708,8 +895,8 @@ function showPetProjection() {
       return;
     }
     setPetProjectionPhase("projected");
-    ghost.classList.add("is-drifting");
-    movePetProjection();
+    ghost.classList.add("is-flying");
+    movePetProjection(performance.now());
   }, PET_PROJECTION_TRANSITION_DURATION);
 }
 
@@ -720,7 +907,9 @@ function updatePetProjectionControls() {
   document.querySelector("#pet-projection-preview").disabled = !petProjectionEnabled || petMotionPreference.matches;
   document.querySelector("#pet-projection-status").textContent = petMotionPreference.matches
     ? "减少动态效果：投影已暂停"
-    : petProjectionEnabled ? "静置 20 秒后，像素小栖出游" : "只在右下角陪伴";
+    : petProjectionEnabled
+      ? document.querySelector("#pet-ghost").dataset.form === "butterfly" ? "静置 20 秒后，守岸人化蝶出游" : "静置 20 秒后，小栖化燕出游"
+      : "只在右下角陪伴";
 }
 
 function setPetProjectionEnabled(enabled) {
@@ -731,6 +920,7 @@ function setPetProjectionEnabled(enabled) {
 
 function previewPetProjection() {
   setPetPanelOpen(false);
+  stopPetBehavior();
   clearTimeout(petReactionTimer);
   document.querySelector("#pet-widget").classList.remove("is-reacting");
   hidePetProjection();
@@ -741,18 +931,132 @@ function startPetCompanion() {
   setPetProjectionEnabled(true);
 }
 
+function startDefaultPetModel() {
+  if (!currentUser) return;
+  document.querySelector("#pet-model-choice").value = "shorekeeper";
+  document.querySelector("#pet-model-consent").checked = true;
+  document.querySelector("#pet-model-watermark").checked = true;
+  resetPetModel();
+  return enableBongoModel();
+}
+
+function updatePetModelControls() {
+  const native = ["qiju", "cat"].includes(document.querySelector("#pet-model-choice").value);
+  document.querySelector("#pet-model-bongo").disabled = !currentUser || Boolean(petModelLoading)
+    || (!native && (!document.querySelector("#pet-model-consent").checked || Boolean(bongoCompanion)));
+}
+
+function updatePetProjectionAppearance() {
+  const butterfly = document.querySelector("#pet-widget").dataset.petModel === "shorekeeper";
+  document.querySelector("#pet-ghost").dataset.form = butterfly ? "butterfly" : "swallow";
+  document.querySelector("#pet-ghost-caption").textContent = butterfly ? "守岸人 · 蝶影" : "小栖 · 光燕";
+  updatePetProjectionControls();
+}
+
 function resetPetCompanion() {
+  resetPetModel();
+  document.querySelector("#pet-model-consent").checked = false;
+  document.querySelector("#pet-model-watermark").checked = false;
+  document.querySelector("#pet-model-bongo").disabled = true;
   petProjectionEnabled = false;
+  stopPetBehavior();
+  clearTimeout(petAmbientTimer);
+  petAmbientTimer = null;
+  petLastAmbientBehavior = "";
+  document.querySelector("#pet-feedback").textContent = "";
   hidePetProjection({ immediate: true });
   clearTimeout(petReactionTimer);
   clearTimeout(petTypingTimer);
-  if (petGazeFrame !== null) cancelAnimationFrame(petGazeFrame);
-  petGazeFrame = null;
+  resetPetGaze();
   const widget = document.querySelector("#pet-widget");
-  widget.classList.remove("is-listening", "is-thinking", "is-typing", "is-speaking", "is-reacting");
+  widget.classList.remove("is-listening", "is-thinking", "is-typing", "is-speaking", "is-reacting", "is-error");
   document.querySelector("#pet-panel").hidden = true;
   document.querySelector("#pet-toggle").setAttribute("aria-expanded", "false");
   document.querySelector("#pet-toggle").setAttribute("aria-label", "打开小栖快捷面板");
+}
+
+function resetPetModel() {
+  petModelGeneration += 1;
+  bongoCompanion?.destroy();
+  bongoCompanion = null;
+  document.querySelector("#pet-live2d").hidden = true;
+  document.querySelector(".pet-avatar").classList.remove("has-bongo-model");
+  document.querySelector("#pet-widget").classList.remove("uses-bongo-model");
+  delete document.querySelector("#pet-widget").dataset.petModel;
+  document.querySelector("#pet-widget").dataset.petAvatar = "qiju";
+  stopPetBehavior();
+  document.querySelector("#pet-model-status").textContent = "当前：小栖 · 原创信号精灵，无需加载运行库。";
+  updatePetProjectionAppearance();
+  updatePetModelControls();
+}
+
+async function enableBongoModel() {
+  if (!currentUser) return;
+  const modelId = document.querySelector("#pet-model-choice").value;
+  if (["qiju", "cat"].includes(modelId)) {
+    resetPetModel();
+    document.querySelector("#pet-widget").dataset.petAvatar = modelId;
+    document.querySelector("#pet-model-status").textContent = modelId === "cat"
+      ? "当前：小栖 · 经典小猫，无需加载运行库。"
+      : "当前：小栖 · 原创信号精灵，无需加载运行库。";
+    keepPetInBounds();
+    return;
+  }
+  if (!document.querySelector("#pet-model-consent").checked) return;
+  if (bongoCompanion) return;
+  const generation = ++petModelGeneration;
+  const button = document.querySelector("#pet-model-bongo");
+  const status = document.querySelector("#pet-model-status");
+  const previous = petModelLoading;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  petModelLoading = pending;
+  button.disabled = true;
+  status.textContent = "正在加载本地 BongoCat 模型…";
+  let companion;
+  try {
+    await previous;
+    if (generation !== petModelGeneration) return;
+    const { createBongoCompanion } = await import("./bongo-renderer.js");
+    if (generation !== petModelGeneration) return;
+    companion = await createBongoCompanion({
+      canvas: document.querySelector("#pet-live2d"),
+      widget: document.querySelector("#pet-widget"),
+      modelId,
+      onError(error) {
+        console.error(error);
+        resetPetModel();
+        status.textContent = `BongoCat 渲染失败：${error.message}。已恢复原创小栖。`;
+        showToast(status.textContent);
+      },
+    });
+    if (generation !== petModelGeneration) {
+      companion.destroy();
+      return;
+    }
+    bongoCompanion = companion;
+    document.querySelector("#pet-live2d").hidden = false;
+    document.querySelector(".pet-avatar").classList.add("has-bongo-model");
+    document.querySelector("#pet-widget").classList.add("uses-bongo-model");
+    document.querySelector("#pet-widget").dataset.petModel = modelId;
+    updatePetProjectionAppearance();
+    status.textContent = `当前：${companion.name} · 本地 Live2D · 输入敲键、指针跟随和口型联动。`;
+    keepPetInBounds();
+    companion.setWatermarkHidden(document.querySelector("#pet-model-watermark").checked);
+  } catch (error) {
+    companion?.destroy();
+    if (generation !== petModelGeneration) return;
+    console.error(error);
+    resetPetModel();
+    status.textContent = `BongoCat 加载失败：${error.message}。已保留原创小栖。`;
+    showToast(status.textContent);
+  } finally {
+    release();
+    if (petModelLoading === pending) {
+      petModelLoading = null;
+      updatePetModelControls();
+    }
+  }
 }
 
 function keepPetInBounds() {
@@ -763,8 +1067,9 @@ function keepPetInBounds() {
 function triggerPetReaction() {
   const widget = document.querySelector("#pet-widget");
   if (!currentUser) return;
+  stopPetBehavior();
   notePetActivity();
-  widget.classList.remove("is-reacting");
+  widget.classList.remove("is-reacting", "is-error");
   void widget.offsetWidth;
   widget.classList.add("is-reacting");
   clearTimeout(petReactionTimer);
@@ -773,6 +1078,7 @@ function triggerPetReaction() {
 
 function updatePetTyping(event) {
   clearTimeout(petTypingTimer);
+  stopPetBehavior();
   notePetActivity();
   const widget = document.querySelector("#pet-widget");
   widget.classList.toggle("is-typing", Boolean(event.currentTarget.value));
@@ -784,6 +1090,14 @@ function stopPetTyping() {
   document.querySelector("#pet-widget").classList.remove("is-typing");
 }
 
+function resetPetGaze() {
+  if (petGazeFrame !== null) cancelAnimationFrame(petGazeFrame);
+  petGazeFrame = null;
+  const avatar = document.querySelector(".pet-avatar");
+  avatar.style.removeProperty("--pet-gaze-x");
+  avatar.style.removeProperty("--pet-gaze-y");
+}
+
 function updatePetGaze(event) {
   if (!currentUser || petMotionPreference.matches || event.pointerType === "touch") return;
   if (petGazeFrame !== null) cancelAnimationFrame(petGazeFrame);
@@ -792,7 +1106,7 @@ function updatePetGaze(event) {
     const avatar = document.querySelector(".pet-avatar").getBoundingClientRect();
     const horizontal = (event.clientX - (avatar.left + avatar.width / 2)) / Math.max(1, window.innerWidth / 2);
     const vertical = (event.clientY - (avatar.top + avatar.height / 2)) / Math.max(1, window.innerHeight / 2);
-    const character = document.querySelector(".pet-character");
+    const character = document.querySelector(".pet-avatar");
     character.style.setProperty("--pet-gaze-x", `${Math.max(-1.6, Math.min(1.6, horizontal * 1.6))}px`);
     character.style.setProperty("--pet-gaze-y", `${Math.max(-1.2, Math.min(1.2, vertical * 1.2))}px`);
   });
@@ -852,8 +1166,10 @@ async function sendChatMessage(rawMessage) {
   clearButton.disabled = true;
   document.querySelector("#assistant-status").textContent = "正在回复…";
   stopPetTyping();
+  stopPetBehavior();
   notePetActivity();
   document.querySelector("#pet-greeting").textContent = "我正在想，马上回复你。";
+  document.querySelector("#pet-widget").classList.remove("is-error");
   document.querySelector("#pet-widget").classList.add("is-thinking");
 
   try {
@@ -892,6 +1208,7 @@ async function sendChatMessage(rawMessage) {
     pending.remove();
     appendChatMessage("assistant", `这次没能完成：${error.message}`);
     document.querySelector("#pet-greeting").textContent = `这次没能完成：${error.message}`.slice(0, 120);
+    document.querySelector("#pet-widget").classList.add("is-error");
   } finally {
     input.disabled = false;
     submit.disabled = false;
@@ -1163,7 +1480,29 @@ document.querySelector("#pet-toggle").addEventListener("click", () => {
 document.querySelector("#pet-close").addEventListener("click", () => setPetPanelOpen(false));
 document.querySelector("#pet-projection-toggle").addEventListener("click", () => setPetProjectionEnabled(!petProjectionEnabled));
 document.querySelector("#pet-projection-preview").addEventListener("click", previewPetProjection);
+document.querySelector("#pet-model-consent").addEventListener("change", (event) => {
+  if (!event.currentTarget.checked) resetPetModel();
+  updatePetModelControls();
+});
+document.querySelector("#pet-model-bongo").addEventListener("click", enableBongoModel);
+document.querySelector("#pet-model-choice").addEventListener("change", () => {
+  resetPetModel();
+  keepPetInBounds();
+});
+document.querySelector("#pet-model-watermark").addEventListener("change", (event) => {
+  bongoCompanion?.setWatermarkHidden(event.currentTarget.checked);
+});
+document.querySelector("#pet-model-original").addEventListener("click", () => {
+  document.querySelector("#pet-model-choice").value = "qiju";
+  resetPetModel();
+  keepPetInBounds();
+});
 document.querySelector("#pet-panel").addEventListener("click", (event) => {
+  const behavior = event.target.closest("button[data-pet-behavior]");
+  if (behavior) {
+    if (!playPetBehavior(behavior.dataset.petBehavior)) showToast("小栖正在忙，等我一下再来玩吧。");
+    return;
+  }
   const action = event.target.closest("[data-pet-action]");
   if (action) runPetAction(action.dataset.petAction);
 });
@@ -1190,6 +1529,10 @@ document.addEventListener("keydown", (event) => {
 });
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    resetPetGaze();
+    stopPetBehavior();
+    clearTimeout(petAmbientTimer);
+    petAmbientTimer = null;
     hidePetProjection();
     stopPetTyping();
   }
@@ -1197,8 +1540,7 @@ document.addEventListener("visibilitychange", () => {
 });
 petMotionPreference.addEventListener("change", () => {
   if (petMotionPreference.matches) {
-    document.querySelector(".pet-character").style.removeProperty("--pet-gaze-x");
-    document.querySelector(".pet-character").style.removeProperty("--pet-gaze-y");
+    resetPetGaze();
   }
   updatePetProjectionControls();
   notePetActivity();
@@ -1325,6 +1667,7 @@ async function initializeDashboard(user) {
   startPetCompanion();
   document.querySelector("#login-screen").hidden = true;
   document.querySelector("#app-shell").hidden = false;
+  startDefaultPetModel();
   document.querySelector("#current-user-label").textContent = user.displayName;
   document.querySelector("#welcome-name").textContent = `欢迎回来，${user.displayName}`;
   document.querySelector(".profile-copy strong").textContent = user.displayName;

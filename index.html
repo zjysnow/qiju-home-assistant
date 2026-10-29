@@ -261,12 +261,41 @@
             </div>
             <button id="pet-close" class="pet-close" type="button" aria-label="收起小栖面板">×</button>
           </div>
-          <p id="pet-greeting" class="pet-greeting" aria-live="polite">平时我在右下角等你。静置一会儿，我会化作像素电子幽灵，在屏幕里轻轻漂浮。</p>
+          <p id="pet-greeting" class="pet-greeting" aria-live="polite">我是小栖，你的家庭小伙伴。当前默认使用守岸人形象，闲下来就化作蝶影，陪你待一会儿。</p>
+          <div class="pet-model-controls">
+            <strong>角色模型</strong>
+            <label for="pet-model-choice">选择模型</label>
+            <select id="pet-model-choice">
+              <option value="shorekeeper">守岸人 · 无表情体验版（默认 · 本机素材）</option>
+              <option value="qiju">小栖 · 原创实验形象（无需运行库）</option>
+              <option value="cat">小栖 · 经典小猫（无需运行库）</option>
+              <option value="standard">BongoCat standard（MIT）</option>
+            </select>
+            <p>默认使用守岸人 Live2D，作者：宇痕冫，仅限个人使用及非盈利直播，禁止二次售卖。原创小栖为实验性分层矢量形象，不是 Live2D。运行库许可与水印可单独设置。<a href="/assets/pet-models/shorekeeper/LICENSE.txt" target="_blank" rel="noopener noreferrer">守岸人作者说明</a></p>
+            <label><input id="pet-model-watermark" type="checkbox" checked />隐藏守岸人画面水印（作者提供的原生开关）</label>
+            <label><input id="pet-model-consent" type="checkbox" checked />我已阅读并同意 <a href="/assets/bongocat/LIVE2D-LICENSE.html" target="_blank" rel="noopener noreferrer">Live2D 运行库许可</a></label>
+            <div>
+              <button id="pet-model-bongo" type="button">启用所选形象</button>
+              <button id="pet-model-original" type="button">原创小栖（实验）</button>
+            </div>
+            <small id="pet-model-status" role="status">当前：小栖 · 原创信号精灵，无需加载运行库。</small>
+            <a href="/assets/bongocat/NOTICE.txt" target="_blank" rel="noopener noreferrer">来源与授权说明</a>
+            <a href="/qiju-design.html" target="_blank" rel="noopener noreferrer">查看原创小栖的新静态立绘（不切换角色）</a>
+          </div>
           <div class="pet-projection-control">
-            <span id="pet-projection-status">静置 20 秒后，像素小栖出游</span>
+            <span id="pet-projection-status">静置 20 秒后，小栖化燕出游</span>
             <div>
               <button id="pet-projection-preview" type="button">看看投影</button>
               <button id="pet-projection-toggle" type="button" aria-pressed="true">关闭投影</button>
+            </div>
+          </div>
+          <div class="pet-play-controls" role="group" aria-label="和小栖玩一会儿">
+            <span>陪小栖玩 <small>不操作设备</small></span>
+            <div>
+              <button type="button" data-pet-behavior="cuddle">摸摸头</button>
+              <button type="button" data-pet-behavior="snack">喂零食</button>
+              <button type="button" data-pet-behavior="jump">跳一跳</button>
+              <button type="button" data-pet-behavior="dance">跳支舞</button>
             </div>
           </div>
           <div class="pet-actions">
@@ -294,8 +323,128 @@
         </section>
         <button id="pet-toggle" class="pet-toggle" type="button" aria-label="打开小栖快捷面板" aria-controls="pet-panel" aria-expanded="false">
           <span class="pet-avatar">
+            <span class="pet-action-fx" aria-hidden="true">
+              <span class="pet-fx-ring"></span>
+              <span class="pet-fx-particles"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+              <span class="pet-fx-symbol"></span>
+            </span>
             <img id="pet-skin-image" class="pet-skin-image" alt="小栖的自定义皮肤" hidden />
-            <svg class="pet-character" viewBox="0 0 160 148" role="img" aria-label="小栖：戴绿领巾、头顶小叶芽的奶白色小猫">
+            <canvas id="pet-live2d" class="pet-live2d" width="384" height="288" aria-hidden="true" hidden></canvas>
+            <svg class="pet-character pet-qiju-character" viewBox="0 0 160 200" role="img" aria-label="小栖：银色长发、青蓝发梢、折翼发夹与雾白短外套的信号精灵">
+              <defs>
+                <linearGradient id="qiju-hair" x1=".2" y1="0" x2=".8" y2="1">
+                  <stop stop-color="#fffefa" />
+                  <stop offset=".45" stop-color="#e1e9ee" />
+                  <stop offset=".8" stop-color="#afcad7" />
+                  <stop offset="1" stop-color="#7ebdca" />
+                </linearGradient>
+                <linearGradient id="qiju-hair-shadow" x1="0" y1="0" x2="1" y2="1">
+                  <stop stop-color="#a8bacb" />
+                  <stop offset="1" stop-color="#6c9bac" />
+                </linearGradient>
+                <linearGradient id="qiju-coat" x1="0" y1="0" x2="1" y2="1">
+                  <stop stop-color="#fffefa" />
+                  <stop offset=".65" stop-color="#edf2f2" />
+                  <stop offset="1" stop-color="#c5d6dd" />
+                </linearGradient>
+                <linearGradient id="qiju-iris" x1="0" y1="0" x2="0" y2="1">
+                  <stop stop-color="#344b68" />
+                  <stop offset=".6" stop-color="#648d9f" />
+                  <stop offset="1" stop-color="#a5d7d4" />
+                </linearGradient>
+                <radialGradient id="qiju-skin">
+                  <stop stop-color="#fff6ec" />
+                  <stop offset="1" stop-color="#eed9d0" />
+                </radialGradient>
+              </defs>
+              <ellipse class="pet-shadow" cx="80" cy="189" rx="43" ry="3" />
+              <g class="pet-rig">
+                <g class="qiju-back-hair">
+                  <path fill="url(#qiju-hair-shadow)" d="M47 48C42 69 47 93 39 127C35 146 40 170 34 182C49 177 55 162 56 142L62 70ZM104 43C120 69 111 101 122 131C128 148 121 171 128 181C111 176 108 155 108 135L96 71Z" />
+                  <path fill="url(#qiju-hair)" d="M50 46C46 73 51 98 44 131C40 150 45 169 39 179C53 168 52 146 56 130L65 67ZM101 43C114 65 108 102 117 132C121 149 116 168 123 177C111 172 110 149 108 134L95 68Z" />
+                  <path class="qiju-hair-line" d="M51 79C55 111 43 143 47 165M106 79C102 111 119 144 116 162" />
+                </g>
+                <g class="qiju-coat-tails" fill="url(#qiju-coat)" opacity=".8">
+                  <path d="M55 153L49 176L41 190L57 181L70 158ZM103 153L110 177L121 191L104 182L91 158Z" />
+                  <path class="qiju-teal-seam" d="M54 162L49 180M106 162L112 181" />
+                </g>
+                <path fill="#2f4158" d="M57 115L103 115L110 176Q80 183 50 176Z" />
+                <path fill="#f3ddd1" d="M70 81L69 100Q80 111 91 100L90 81Z" />
+                <path fill="#d9bfb7" stroke="none" d="M70 86Q80 96 90 86L90 94Q80 99 70 94Z" />
+                <path fill="url(#qiju-coat)" d="M66 96L48 101L44 124L51 160L46 171L65 176L72 148L80 122L88 148L95 176L115 170L109 157L116 121L110 101L94 96L80 111Z" />
+                <path fill="#26394f" d="M72 99L80 109L88 99L92 142L84 166L77 166L68 142Z" />
+                <path fill="#fffefa" d="M66 96L76 107L72 122L59 105ZM94 96L84 107L88 122L101 105Z" />
+                <path class="qiju-seam" d="M59 111L63 147L56 163M101 111L97 147L105 163M73 122L68 153M87 122L92 153" />
+                <path class="qiju-teal-seam" d="M48 109L55 111M105 111L112 109M72 166L87 166" />
+                <path fill="#89bebd" stroke="none" d="M79 115L82 117L80 126L77 118Z" />
+                <g class="qiju-arm qiju-arm-left pet-paw-left">
+                  <path fill="url(#qiju-coat)" d="M49 103C39 106 35 123 32 137Q32 145 41 150L59 143L56 132L45 135L53 114Z" />
+                  <path class="qiju-seam" d="M41 117L38 135L47 142" />
+                  <path fill="#344b62" d="M48 134L57 131L62 141L54 146Z" />
+                  <path fill="url(#qiju-skin)" d="M56 133Q62 128 66 132L70 137Q70 140 65 140L61 143L57 141Z" />
+                  <path class="qiju-skin-line" d="M62 134L66 137" />
+                </g>
+                <g class="qiju-arm qiju-arm-right pet-paw-right">
+                  <path fill="url(#qiju-coat)" d="M110 103C120 106 123 121 127 137Q127 145 119 150L100 144L103 133L114 136L106 114Z" />
+                  <path class="qiju-seam" d="M118 117L121 136L112 143" />
+                  <path fill="#344b62" d="M111 134L102 132L98 142L106 147Z" />
+                  <path fill="url(#qiju-skin)" d="M103 134Q97 130 93 133L89 138Q90 141 95 141L100 144L104 141Z" />
+                  <path class="qiju-skin-line" d="M97 135L93 138" />
+                </g>
+                <g class="pet-head-rig qiju-head">
+                  <path fill="url(#qiju-hair-shadow)" d="M48 55C41 24 61 16 80 17C102 14 120 33 112 63L104 92L54 92Z" />
+                  <path fill="url(#qiju-skin)" d="M55 57C49 54 49 67 56 70M104 57C110 53 111 67 104 70" />
+                  <path fill="url(#qiju-skin)" d="M56 42Q80 26 104 42L103 65Q100 82 80 90Q60 82 57 65Z" />
+                  <path class="qiju-skin-line" d="M80 66L78 71L81 72" />
+                  <path class="qiju-brow" d="M59 55Q65 52 71 55M89 55Q96 52 101 55" />
+                  <g class="pet-eyes">
+                    <g class="pet-blink">
+                      <path fill="#fffdf8" stroke="none" d="M57 62Q64 56 73 62Q68 72 61 68ZM87 62Q95 56 103 62Q99 70 91 68Z" />
+                      <ellipse fill="url(#qiju-iris)" stroke="none" cx="66" cy="63.5" rx="3.5" ry="4.8" />
+                      <ellipse fill="url(#qiju-iris)" stroke="none" cx="95" cy="63.5" rx="3.5" ry="4.8" />
+                      <ellipse fill="#34475f" stroke="none" cx="66" cy="63" rx="1.25" ry="2.8" />
+                      <ellipse fill="#34475f" stroke="none" cx="95" cy="63" rx="1.25" ry="2.8" />
+                      <path class="qiju-lash" d="M56 60L59 62Q65 57 73 62M87 62Q95 57 101 61L104 59" />
+                      <path class="qiju-lower-lid" d="M61 69Q66 71 70 68M91 68Q96 71 100 68" />
+                      <circle fill="#fff" stroke="none" cx="65" cy="61.5" r="1.2" />
+                      <circle fill="#fff" stroke="none" cx="94" cy="61.5" r="1.2" />
+                    </g>
+                  </g>
+                  <path class="pet-happy-eyes qiju-lash" d="M58 64Q65 58 72 64M88 64Q95 58 102 64" />
+                  <ellipse class="qiju-cheek" cx="60" cy="72" rx="4" ry="1.5" />
+                  <ellipse class="qiju-cheek" cx="100" cy="72" rx="4" ry="1.5" />
+                  <path class="pet-mouth qiju-mouth" d="M77 78Q80 80 83 78" />
+                  <ellipse class="pet-mouth-open qiju-mouth-open" cx="80" cy="78.5" rx="2.2" ry="2" />
+                  <path fill="url(#qiju-hair)" d="M48 55C40 32 59 17 80 18C104 14 119 36 109 62L104 45Q91 47 81 32Q75 45 63 48L57 60L55 43Z" />
+                  <path fill="#fffefa" stroke="none" opacity=".8" d="M53 39Q56 24 77 22Q61 29 59 43ZM85 23Q104 22 109 42Q103 30 85 23Z" />
+                  <path class="qiju-hair-line" d="M77 24Q69 40 61 44M84 25Q91 39 102 41" />
+                  <path class="qiju-hair-lock" fill="url(#qiju-hair)" d="M52 44C59 61 49 81 51 104C47 123 51 142 44 153C47 131 41 117 46 97C46 77 43 59 52 44Z" />
+                  <path class="qiju-hair-lock qiju-hair-lock-right" fill="url(#qiju-hair)" d="M107 48C102 69 112 84 108 107C107 126 116 144 112 158C112 136 101 121 104 104C107 82 98 66 107 48Z" />
+                  <g class="qiju-wing-clip">
+                    <path fill="#a5d9d4" stroke="#698fa0" stroke-width=".6" d="M102 48L113 41L109 48L117 46L106 54L108 49Z" />
+                    <path fill="none" stroke="#f4ffff" stroke-width=".7" d="M105 48L110 45M108 51L113 48" />
+                    <circle class="qiju-clip-signal" cx="110" cy="53" r="1.4" />
+                  </g>
+                </g>
+                <g class="qiju-thinking-arm">
+                  <path fill="url(#qiju-coat)" d="M110 103C121 108 126 125 116 135Q111 139 105 132L86 107L96 100L110 120L107 114Z" />
+                  <path class="qiju-seam" d="M116 117L118 127Q115 133 111 132L94 111" />
+                  <path fill="#344b62" d="M86 107L96 112L102 101L92 96Z" />
+                  <path fill="url(#qiju-skin)" d="M92 101C91 96 88 93 91 89L95 84Q97 82 99 84L96 90L101 86Q104 86 103 89L98 98L99 103Z" />
+                  <path class="qiju-skin-line" d="M94 93L97 89" />
+                </g>
+                <g class="pet-keyboard qiju-console">
+                  <path d="M56 147L104 147L112 157L49 157Z" />
+                  <path class="pet-keys" d="M61 151L100 151M67 154L94 154" />
+                </g>
+              </g>
+              <g class="pet-thought-dots"><circle cx="128" cy="45" r="1.2" /><circle cx="134" cy="38" r="1.5" /><circle cx="141" cy="35" r="1.8" /></g>
+              <g class="pet-listen-marks"><path d="M123 62Q128 68 123 74M128 58Q137 68 128 78" /></g>
+              <path class="pet-heart" d="M130 67C117 59 123 50 130 56C137 49 143 59 130 67Z" />
+              <g class="pet-snack"><path d="M69 144H91L88 154H72Z" /><path d="M73 141Q76 137 79 141Q82 137 86 141" /></g>
+              <g class="pet-sleep-marks"><path d="M123 49H129L123 57H129M132 35H141L132 46H141" /></g>
+            </svg>
+            <svg class="pet-character pet-cat-character" viewBox="0 0 160 148" role="img" aria-label="小栖：戴绿领巾、头顶小叶芽的奶白色小猫">
               <ellipse class="pet-shadow" cx="81" cy="133" rx="51" ry="5" />
               <g class="pet-cat">
                 <path class="pet-tail pet-fur" d="M118 114c26 5 30-12 22-18-6-4-12 1-8 6 4 6-5 8-13 4" />
@@ -344,41 +493,132 @@
               <g class="pet-listen-marks"><path d="M17 49q-7 8 0 16m-7-22q-12 14 0 28" /></g>
               <g class="pet-thought-dots"><circle cx="127" cy="25" r="2" /><circle cx="136" cy="19" r="2.5" /><circle cx="146" cy="17" r="3" /></g>
               <path class="pet-heart" d="M132 45c-10-6-12-12-8-15 4-3 8 0 8 3 1-4 6-6 9-2 4 5-3 11-9 14Z" />
+              <g class="pet-snack"><path d="M62 121h36l-5 12H67Z" /><path d="m72 117 4-5 5 5 6-5 4 5" /></g>
+              <g class="pet-sleep-marks"><path d="M119 47h8l-8 9h8m3-27h11l-11 12h11" /></g>
             </svg>
           </span>
           <span class="pet-name-badge"><i></i> 小栖 <span id="pet-state-label" aria-hidden="true">陪伴中</span></span>
         </button>
         <span class="pet-transfer-pixels" aria-hidden="true"></span>
+        <span class="pet-portal-fx" aria-hidden="true"></span>
+        <span id="pet-feedback" class="sr-only" role="status"></span>
       </aside>
-      <div id="pet-ghost" class="pet-ghost" aria-hidden="true" hidden>
+      <div id="pet-ghost" class="pet-ghost" data-form="swallow" aria-hidden="true" hidden>
         <span class="pet-transfer-pixels"></span>
+        <span class="pet-portal-fx"></span>
         <div class="pet-ghost-visual">
-        <svg class="pet-pixel-art" viewBox="0 0 40 48" shape-rendering="crispEdges">
-          <g class="pet-pixel-sparks" fill="#9adac6">
-            <path d="M3 14h2v2H3zm31-7h2v2h-2zM5 33h2v2H5zm29-7h2v2h-2z" />
-            <path opacity=".45" d="M1 22h2v2H1zm35-4h2v2h-2zM8 41h2v2H8zm22-3h2v2h-2z" />
+        <svg class="pet-swallow-art" viewBox="0 0 80 96">
+          <defs>
+            <linearGradient id="qiju-swallow-light" gradientUnits="userSpaceOnUse" x1="40" y1="46" x2="7" y2="22">
+              <stop stop-color="#f0fffc" />
+              <stop offset=".55" stop-color="#a1e5e3" stop-opacity=".85" />
+              <stop offset="1" stop-color="#58b8d5" stop-opacity=".75" />
+            </linearGradient>
+            <linearGradient id="qiju-swallow-tail-light" x1="0" y1="0" x2="0" y2="1">
+              <stop stop-color="#c5f7ed" stop-opacity=".85" />
+              <stop offset="1" stop-color="#5eabc4" stop-opacity=".35" />
+            </linearGradient>
+            <g id="qiju-swallow-wing">
+              <path fill="url(#qiju-swallow-light)" stroke="#82c5d3" stroke-width=".4" d="M40 45C27 44 14 35 6 22C9 39 22 51 40 48Z" />
+              <path fill="none" stroke="#e1fffa" stroke-width=".45" opacity=".8" d="M39 46Q21 43 9 27" />
+            </g>
+          </defs>
+          <g class="pet-swallow-spirit">
+          <g class="pet-swallow-facing">
+            <g class="pet-swallow-trail" fill="none" stroke="url(#qiju-swallow-tail-light)" stroke-width=".6">
+              <path d="M39 63Q35 72 39 82M43 65Q48 73 43 79" />
+            </g>
+            <path class="pet-swallow-tail" fill="url(#qiju-swallow-tail-light)" d="M38 52L31 76L40 64L49 76L42 52Z" />
+            <g class="pet-swallow-pose pet-swallow-pose-front">
+              <g class="pet-swallow-wing"><use href="#qiju-swallow-wing" /></g>
+              <g transform="translate(80 0) scale(-1 1)"><g class="pet-swallow-wing"><use href="#qiju-swallow-wing" /></g></g>
+            </g>
+            <g class="pet-swallow-pose pet-swallow-pose-quarter">
+              <g opacity=".5" transform="translate(24 9.2) scale(.4 .8)"><g class="pet-swallow-wing"><use href="#qiju-swallow-wing" /></g></g>
+              <g transform="translate(80 0) scale(-1 1)"><g class="pet-swallow-wing"><use href="#qiju-swallow-wing" /></g></g>
+            </g>
+            <g class="pet-swallow-pose pet-swallow-pose-side">
+              <g opacity=".45" transform="translate(27.2 13.8) scale(.32 .7)"><g class="pet-swallow-wing"><use href="#qiju-swallow-wing" /></g></g>
+              <g transform="translate(10 0) scale(.75 1)"><g class="pet-swallow-wing"><use href="#qiju-swallow-wing" /></g></g>
+            </g>
+            <path class="pet-swallow-body" fill="#e1fff7" stroke="#79b8c5" stroke-width=".4" d="M40 31L42 36Q44 44 41 57L39 57Q36 44 38 36Z" />
+            <path fill="none" stroke="#a1d3d9" stroke-width=".6" d="M40 39L40 51" />
           </g>
-          <g class="pet-pixel-spirit">
-            <path fill="#527e75" d="M10 8h4v3h12V8h4v4h2v4h2v13h-4v4h-3v5h-3v3h-3v-3h-3v4h-3v-4h-3v-6H8v-4H6V16h2v-4h2Z" />
-            <path fill="#d8fff1" d="M11 11h2v3h14v-3h2v5h3v11h-4v4H12v-2H8V17h3Z" />
-            <path fill="#97d7c2" d="M10 18h3v-4h4v2h-2v5h-5Zm13-4h4v3h3v5h-4v-4h-3Z" />
-            <path fill="#f3fff2" d="M14 18h12v10H13v-7h1Z" />
-            <path fill="#386e69" d="M15 22h2v3h-2zm8 0h2v3h-2zm-5 5h4v1h-4Z" />
-            <path fill="#f1b5b3" d="M11 26h3v1h-3zm15 0h3v1h-3Z" />
-            <path fill="#a5e7d2" d="M12 30h16v3h-3v5h-3v-3h-3v4h-2v-4h-3v-3h-2Z" />
-            <path fill="#eaffef" d="M16 31h8v3h-3v2h-2v-2h-3Z" />
-            <path fill="#689b83" d="M19 11V7h-5V3h4v2h2V2h5v4h-3v5Z" />
-            <path fill="#c6f4a8" d="M15 4h3v2h-3zm6-1h3v2h-3Z" />
-            <path fill="#f4dc9e" d="M18 31h4v3h-4Z" />
-            <path fill="#c3f4df" d="M6 22h3v7H6zm25 0h3v7h-3Z" />
-            <path fill="#fff" opacity=".55" d="M10 19h20v1H10zm-1 6h22v1H9zm5 9h12v1H14Z" />
-          </g>
-          <g class="pet-pixel-signal" fill="#94cdbb">
-            <path opacity=".25" d="M9 43h22v1H9zm3 2h16v1H12Z" />
-            <path d="M16 43h3v1h-3zm5 0h3v1h-3Z" />
           </g>
         </svg>
-        <span class="pet-ghost-caption">小栖 · 电子幽灵</span>
+        <svg class="pet-butterfly-art" viewBox="0 0 80 96">
+          <defs>
+            <linearGradient id="pet-butterfly-wing-light" gradientUnits="userSpaceOnUse" x1="40" y1="46" x2="14" y2="15">
+              <stop stop-color="#f0ffff" stop-opacity=".98" />
+              <stop offset=".45" stop-color="#95f8ff" stop-opacity=".9" />
+              <stop offset="1" stop-color="#12c6ed" stop-opacity=".55" />
+            </linearGradient>
+            <linearGradient id="pet-butterfly-tail-light" x1="0" y1="0" x2="0" y2="1">
+              <stop stop-color="#9bfaff" stop-opacity=".9" />
+              <stop offset="1" stop-color="#17c6eb" stop-opacity=".15" />
+            </linearGradient>
+            <radialGradient id="pet-butterfly-core-light">
+              <stop stop-color="#f4ffff" />
+              <stop offset=".3" stop-color="#b5ffff" stop-opacity=".9" />
+              <stop offset="1" stop-color="#3adfff" stop-opacity="0" />
+            </radialGradient>
+            <filter id="pet-butterfly-bloom" x="-100%" y="-100%" width="300%" height="300%">
+              <feGaussianBlur stdDeviation="1.2" />
+            </filter>
+            <g id="pet-ghost-butterfly-wing">
+              <path fill="url(#pet-butterfly-wing-light)" stroke="#57e5fa" stroke-width=".4" d="M40 46C34 31 25 28 22 15C17 28 25 41 40 46ZM40 46C31 42 23 43 16 48C26 49 32 52 40 46Z" />
+              <path fill="none" stroke="#dcffff" stroke-width=".45" opacity=".6" d="M40 46C31 38 25 30 22 19M39 47Q28 45 19 48" />
+            </g>
+          </defs>
+          <g class="pet-butterfly-motes" fill="#73e8ff">
+            <circle cx="13" cy="61" r=".9" />
+            <circle cx="60" cy="28" r=".7" />
+            <circle cx="43" cy="79" r=".6" />
+          </g>
+          <g class="pet-butterfly-spirit">
+          <g class="pet-butterfly-facing">
+          <g class="pet-butterfly-stroke">
+            <g class="pet-butterfly-trail" fill="none" stroke="url(#pet-butterfly-tail-light)" stroke-linecap="round">
+              <path stroke-width=".6" d="M39 55C35 62 42 67 36 77" />
+            </g>
+            <ellipse class="pet-butterfly-aura" cx="40" cy="46" rx="4" ry="8" fill="url(#pet-butterfly-core-light)" filter="url(#pet-butterfly-bloom)" />
+            <g class="pet-butterfly-tails" fill="none" stroke="url(#pet-butterfly-tail-light)" stroke-width=".7" stroke-linecap="round">
+              <path d="M30 48C25 55 31 59 27 66Q24 71 27 75" />
+              <path d="M50 48C54 55 50 59 55 63Q60 65 59 69" />
+            </g>
+            <g class="pet-butterfly-wings">
+              <g class="pet-butterfly-pose pet-butterfly-pose-front">
+                <g class="pet-butterfly-wing-left"><use href="#pet-ghost-butterfly-wing" /></g>
+                <g transform="translate(80 0) scale(-1 1)">
+                  <g class="pet-butterfly-wing-right"><use href="#pet-ghost-butterfly-wing" /></g>
+                </g>
+              </g>
+              <g class="pet-butterfly-pose pet-butterfly-pose-quarter">
+                <g opacity=".5" transform="translate(24 9.2) scale(.4 .8)">
+                  <g class="pet-butterfly-wing-left"><use href="#pet-ghost-butterfly-wing" /></g>
+                </g>
+                <g transform="translate(80 0) scale(-1 1)">
+                  <g class="pet-butterfly-wing-right"><use href="#pet-ghost-butterfly-wing" /></g>
+                </g>
+              </g>
+              <g class="pet-butterfly-pose pet-butterfly-pose-side">
+                <g opacity=".45" transform="translate(18 6.9) scale(.55 .85)">
+                  <g class="pet-butterfly-wing-left"><use href="#pet-ghost-butterfly-wing" /></g>
+                </g>
+                <g transform="translate(12 0) scale(.7 1)">
+                  <g class="pet-butterfly-wing-right"><use href="#pet-ghost-butterfly-wing" /></g>
+                </g>
+              </g>
+            </g>
+            <g class="pet-butterfly-core">
+              <path fill="#e3ffff" d="M40 39C38.8 43 39.4 48 40 51C40.6 48 41.2 43 40 39Z" />
+              <path fill="none" stroke="#baffff" stroke-width=".4" stroke-linecap="round" d="M39.7 41Q37 37 36 37M40.3 41Q43 37 44 37" />
+            </g>
+          </g>
+          </g>
+          </g>
+        </svg>
+        <span id="pet-ghost-caption" class="pet-ghost-caption">小栖 · 光燕</span>
         </div>
       </div>
     </div>

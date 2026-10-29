@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>小栖 · 归巢 — 飞燕主题静态立绘稿</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #35485a; background: #f5f4f0; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+    a { color: inherit; text-underline-offset: 4px; }
+    a:focus-visible { outline: 2px solid #477f89; outline-offset: 5px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 20px; max-width: 1280px; margin: auto; padding: 28px 40px; font-size: 12px; }
+    .brand { letter-spacing: .2em; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 300px; align-items: center; gap: 48px; max-width: 1160px; min-height: calc(100svh - 100px); padding: 0 40px 48px; margin: auto; }
+    figure { position: relative; display: grid; place-items: center; min-width: 0; margin: 0; overflow: hidden; border: 1px solid #dceaf5; border-radius: 140px 140px 8px 8px; background: radial-gradient(ellipse at 50% 30%, #ffffff, #eef8ff 70%, #e0f0ff); }
+    figure::before { content: ""; position: absolute; width: 65%; aspect-ratio: 1; border: 1px solid #ccd9d9; border-radius: 50%; top: 13%; }
+    .portrait { position: relative; display: block; width: 100%; height: auto; object-fit: contain; }
+    .size-study { display: flex; align-items: center; gap: 14px; padding-top: 20px; border-top: 1px solid #dce2df; }
+    .size-study img { flex: 0 0 128px; width: 128px; height: 128px; }
+    .size-study p { color: #7e8d92; font-size: 11px; line-height: 1.8; }
+    figcaption { position: absolute; bottom: 20px; left: 24px; color: #687e88; font-size: 10px; letter-spacing: .12em; }
+    .eyebrow { color: #6f8991; font-size: 10px; letter-spacing: .22em; }
+    h1 { margin: 20px 0 10px; color: #30455b; font-family: "Songti SC", "Noto Serif CJK SC", serif; font-size: 56px; font-weight: 500; letter-spacing: .1em; }
+    .subtitle { margin: 0 0 30px; color: #72878c; font-size: 13px; letter-spacing: .16em; }
+    .intro { font-size: 14px; line-height: 2; }
+    dl { display: grid; gap: 18px; margin: 30px 0; padding: 24px 0; border-top: 1px solid #dce2df; border-bottom: 1px solid #dce2df; }
+    dt { margin-bottom: 5px; color: #557781; font-size: 11px; }
+    dd { margin: 0; color: #77868d; font-size: 12px; line-height: 1.8; }
+    .palette { display: flex; gap: 10px; margin: 24px 0; list-style: none; padding: 0; }
+    .palette li { width: 24px; height: 24px; border: 1px solid #52677d22; border-radius: 50%; }
+    .note { color: #7e8d92; font-size: 11px; line-height: 1.9; }
+    .download { display: inline-block; margin: 16px 0 10px; padding: 12px 18px; border: 1px solid #bdccce; border-radius: 4px; font-size: 12px; text-decoration: none; }
+    .download:hover { background: #e4ece9; }
+    @media (max-width: 760px) {
+      header { padding: 22px; }
+      main { grid-template-columns: 1fr; gap: 28px; padding: 0 22px 40px; }
+      .portrait { max-height: none; }
+      figure { border-radius: 130px 130px 8px 8px; }
+      h1 { font-size: 42px; }
+      aside { max-width: 480px; }
+    }
+  </style>
+</head>
+<body>
+  <header><span class="brand">栖居 / CHARACTER STUDY</span><a href="/">返回家庭控制台</a></header>
+  <main>
+    <figure>
+      <img class="portrait" src="/assets/pet/qiju-portrait.svg" width="640" height="640" alt="小栖归巢主题第十一稿：浅色薄袖口下露出短手腕，连续连接带轻微拇指轮廓的小手；双臂保持收近身体的姿态。圆头、头巾、长发、平整胸前、钟形裙摆和短腿保持不变。" />
+      <figcaption>QIJU / HAND STUDY 11</figcaption>
+    </figure>
+    <aside aria-labelledby="design-title">
+      <p class="eyebrow">ORIGINAL CHARACTER · STILL ART</p>
+      <h1 id="design-title">小栖</h1>
+      <p class="subtitle">归巢 / HOMEWARD SWALLOW</p>
+      <p class="intro">把回家的信号，<br />藏在一只小燕子里。</p>
+      <dl>
+        <div><dt>袖口到小手 · 第十一稿</dt><dd>去掉厚重的深蓝袖口横带，改为浅色薄布边。露出一小段手腕，用同一条轮廓连接手掌，不再把小手画成袖口末端的圆点。</dd></div>
+        <div><dt>简化，但不省掉手的结构</dt><dd>保留圆润的小手，加一点拇指转折和自然下落的方向，不画密集分指。双臂仍收近身体，肩线与袖身保持连续。</dd></div>
+        <div><dt>保留长发与归巢主题</dt><dd>圆头、轻薄头巾、垂近裙摆的长发、平整浅青胸前、窄圆领、小光燕挂坠、钟形裙摆与短腿保持不变。参考图只用于比例与姿态对照，不复制角色素材。</dd></div>
+      </dl>
+      <ul class="palette" aria-label="配色：雪白、晴蓝、深蓝、冰青、淡金">
+        <li style="background:#ffffff"></li><li style="background:#6bbcff"></li><li style="background:#273f7b"></li><li style="background:#8de5f0"></li><li style="background:#f9edce"></li>
+      </ul>
+      <a class="download" href="/assets/pet/qiju-portrait.svg" download="qiju-portrait.svg">下载透明背景立绘 SVG</a>
+      <div class="size-study"><img src="/assets/pet/qiju-portrait.svg" width="128" height="128" alt="128 像素桌宠尺寸预览" /><p>128 px 缩小预览<br />同时检查桌宠尺寸下的轮廓与表情。</p></div>
+      <p class="note">原创矢量静态稿 · 不含动画或 Live2D。<br />本页仅用于确认人物设计，不替换当前默认守岸人，也不加载家庭数据。</p>
+    </aside>
+  </main>
+</body>
+</html>

@@ -6,6 +6,16 @@
   "engines": {
     "node": ">=20.18"
   },
+  "dependencies": {
+    "@pixi/unsafe-eval": "6.5.10",
+    "pixi-live2d-display": "0.4.0",
+    "pixi.js": "6.5.10"
+  },
+  "overrides": {
+    "pixi-live2d-display": {
+      "gh-pages": "5.0.0"
+    }
+  },
   "scripts": {
     "test": "node --test",
     "start": "node --env-file-if-exists=.env server.mjs",

@@ -1030,13 +1030,45 @@ async function executeIntent(intent, user) {
 const staticFiles = new Map([
   ["/", ["index.html", "text/html; charset=utf-8"]],
   ["/index.html", ["index.html", "text/html; charset=utf-8"]],
+  ["/qiju-design.html", ["qiju-design.html", "text/html; charset=utf-8"]],
+  ["/assets/pet/qiju-portrait.svg", ["assets/pet/qiju-portrait.svg", "image/svg+xml"]],
   ["/styles.css", ["styles.css", "text/css; charset=utf-8"]],
   ["/app.js", ["app.js", "text/javascript; charset=utf-8"]],
   ["/pet-renderer.js", ["pet-renderer.js", "text/javascript; charset=utf-8"]],
+  ["/bongo-renderer.js", ["bongo-renderer.js", "text/javascript; charset=utf-8"]],
+  ["/assets/vendor/pixi.min.js", ["node_modules/pixi.js/dist/browser/pixi.min.js", "text/javascript; charset=utf-8"]],
+  ["/assets/vendor/pixi-csp.min.js", ["node_modules/@pixi/unsafe-eval/dist/browser/unsafe-eval.min.js", "text/javascript; charset=utf-8"]],
+  ["/assets/vendor/cubism4.min.js", ["node_modules/pixi-live2d-display/dist/cubism4.min.js", "text/javascript; charset=utf-8"]],
+  ["/assets/vendor/live2dcubismcore.min.js", ["assets/vendor/live2dcubismcore.min.js", "text/javascript; charset=utf-8"]],
   ["/speaker-id.js", ["speaker-id.js", "text/javascript; charset=utf-8"]],
   ["/manifest.webmanifest", ["manifest.webmanifest", "application/manifest+json; charset=utf-8"]],
   ["/icon.svg", ["icon.svg", "image/svg+xml"]],
 ]);
+
+for (const name of [
+  "cat.model3.json", "demomodel.cdi3.json", "demomodel.moc3",
+  "live2d_expression0.exp3.json", "live2d_expression1.exp3.json", "live2d_expression2.exp3.json",
+  "live2d_motion1.motion3.json", "live2d_motion2.motion3.json", "live2d_motion1.flac",
+  "demomodel.1024/texture_00.png", "demomodel.1024/texture_01.png", "demomodel.1024/texture_02.png",
+  "LICENSE-MIT.txt", "LIVE2D-LICENSE.html", "NOTICE.txt",
+]) {
+  const contentType = {
+    ".json": "application/json; charset=utf-8", ".png": "image/png", ".moc3": "application/octet-stream",
+    ".flac": "audio/flac", ".txt": "text/plain; charset=utf-8", ".html": "text/html; charset=utf-8",
+  }[path.extname(name)];
+  staticFiles.set(`/assets/bongocat/${name}`, [`assets/bongocat/${name}`, contentType]);
+}
+
+for (const name of [
+  "cat.model3.json", "cat.moc3", "cat.cdi3.json", "cat.physics3.json",
+  "syxs.motion3.json", "cat.8192/texture_00.png", "LICENSE.txt",
+]) {
+  const contentType = {
+    ".json": "application/json; charset=utf-8", ".png": "image/png",
+    ".moc3": "application/octet-stream", ".txt": "text/plain; charset=utf-8",
+  }[path.extname(name)];
+  staticFiles.set(`/assets/pet-models/shorekeeper/${name}`, [`data/pet-models/shorekeeper/${name}`, contentType]);
+}
 
 async function serveStaticFile(requestUrl, response) {
   const [fileName, contentType] = staticFiles.get(requestUrl.pathname);
@@ -1045,7 +1077,7 @@ async function serveStaticFile(requestUrl, response) {
     "content-type": contentType,
     "cache-control": "no-cache",
     "x-content-type-options": "nosniff",
-    "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:",
+    "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; img-src 'self' data: blob:",
     "referrer-policy": "no-referrer",
   });
   response.end(content);
